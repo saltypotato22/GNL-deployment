@@ -1,0 +1,330 @@
+/* Main application styles for Slim Graph */
+/* Matching Slim Gantt design system */
+
+/* Reset and base styles */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+/* Remove spinner from number inputs */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+/* Table styles */
+.sortable-header {
+    transition: background-color 0.2s;
+}
+
+.sortable-header:hover {
+    background-color: #e5e7eb;
+    cursor: pointer;
+}
+
+/* Graph node styles */
+.graph-node {
+    transition: opacity 0.2s;
+}
+
+.graph-node:hover {
+    opacity: 0.8;
+    cursor: pointer;
+}
+
+/* Custom scrollbar styles */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Animation for processing state */
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Ensure full height for the app */
+#root {
+    height: 100vh;
+}
+
+/* Modal overlay styles */
+.modal-overlay {
+    backdrop-filter: blur(4px);
+}
+
+/* Resource/Group color coding */
+.resource-color-1 { background-color: #3B82F6; } /* Blue */
+.resource-color-2 { background-color: #10B981; } /* Green */
+.resource-color-3 { background-color: #F59E0B; } /* Orange */
+.resource-color-4 { background-color: #8B5CF6; } /* Purple */
+.resource-color-5 { background-color: #EC4899; } /* Pink */
+.resource-color-6 { background-color: #14B8A6; } /* Teal */
+.resource-color-7 { background-color: #F97316; } /* Deep Orange */
+.resource-color-8 { background-color: #06B6D4; } /* Cyan */
+
+/* Mermaid diagram container */
+#mermaid-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    user-select: none;
+    overflow: hidden;
+}
+
+#mermaid-container svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: none;
+    max-height: none;
+    pointer-events: none;
+    transition: transform 250ms ease-out; /* Smooth zoom/pan transitions */
+}
+
+/* Mermaid subgraph (group) styling */
+#mermaid-container .cluster rect {
+    stroke-width: 1px !important;
+    fill: none !important;
+    stroke: #999 !important;
+}
+
+#mermaid-container .cluster-label text {
+    font-weight: 600 !important;
+    font-size: 12px !important;
+}
+
+/* Link/edge line thickness */
+#mermaid-container .flowchart-link,
+#mermaid-container path.path {
+    stroke-width: 1px !important;
+}
+
+/* Node styling */
+#mermaid-container rect.node {
+    rx: 3px !important;
+}
+
+/* Disable transition during manual pan to avoid lag */
+.panning #mermaid-container svg {
+    transition: none;
+}
+
+/* Zoom/Pan container for Mermaid */
+.mermaid-zoom-container {
+    transform-origin: center center;
+    transition: transform 0.2s ease-out;
+}
+
+/* Table cell error states */
+.cell-error {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+}
+
+.cell-warning {
+    background-color: #fffbeb;
+    border: 1px solid #fde68a;
+}
+
+/* Empty state */
+.empty-state {
+    color: #9ca3af;
+}
+
+/* Tooltip */
+.graph-tooltip {
+    position: fixed;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 8px 12px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    font-size: 12px;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.graph-tooltip-header {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #111827;
+}
+
+.graph-tooltip-content {
+    color: #4b5563;
+}
+
+/* Button states */
+.btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Split pane resize handle (future enhancement) */
+.resize-handle {
+    width: 4px;
+    background-color: #e5e7eb;
+    cursor: col-resize;
+    transition: background-color 0.2s;
+}
+
+.resize-handle:hover {
+    background-color: #3b82f6;
+}
+
+/* Loading spinner */
+.spinner {
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #3b82f6;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Text overflow handling for table inputs */
+.table-input {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.table-input:focus {
+    /* Show full text when editing */
+    overflow: visible;
+    white-space: normal;
+}
+
+/* ==================== */
+/* Accessibility Styles */
+/* ==================== */
+
+/* Focus indicators for all interactive elements */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* High contrast focus for icon buttons */
+.icon-button:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Skip link for keyboard navigation */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: #3b82f6;
+    color: white;
+    padding: 8px 16px;
+    z-index: 100;
+    transition: top 0.3s;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* Screen reader only text (visually hidden but accessible) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    #mermaid-container svg {
+        transition: none;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .sortable-header:hover {
+        background-color: #000;
+        color: #fff;
+    }
+
+    button:focus-visible {
+        outline: 3px solid currentColor;
+    }
+}
+
+/* Link mode indicator for keyboard users */
+.link-mode-active {
+    position: relative;
+}
+
+.link-mode-active::after {
+    content: "Press Enter to select target, Escape to cancel";
+    position: absolute;
+    bottom: -24px;
+    left: 0;
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+}

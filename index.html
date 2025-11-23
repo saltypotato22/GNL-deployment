@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slim Graph - Network Diagram Visualizer</title>
+
+    <!-- External Dependencies (pinned versions for security/stability) -->
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                fontSize: '14px',
+                // White background for link labels to prevent overlap with lines
+                edgeLabelBackground: '#ffffff',
+                // Make subgraph (group) borders thinner
+                clusterBkg: 'none',
+                clusterBorder: '#999',
+                lineColor: '#333',
+                // Minimal node padding
+                nodePadding: 8,  // Total padding (4px each side)
+                nodeTextColor: '#333'
+            },
+            flowchart: {
+                nodeSpacing: 50,      // Horizontal spacing between nodes (restored to original)
+                rankSpacing: 50,      // Vertical spacing between ranks (restored to original)
+                padding: 50,          // Overall diagram padding
+                curve: 'basis',       // Curved edges
+                htmlLabels: true,     // Enable HTML labels for better control
+                useMaxWidth: false    // Don't constrain to container width
+            }
+        });
+        window.mermaid = mermaid;
+    </script>
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+    <!-- Skip link for keyboard navigation -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <!-- Root element for React app -->
+    <div id="root" role="application" aria-label="Slim Graph Network Diagram Visualizer"></div>
+
+    <!-- Screen reader announcements -->
+    <div id="a11y-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Initialize global namespace -->
+    <script>
+        window.GraphApp = {
+            components: {},
+            utils: {},
+            core: {},
+            data: {},
+            exports: {},
+            config: {}
+        };
+    </script>
+
+    <!-- Load modules in dependency order -->
+    <!-- 1. Icons and basic components -->
+    <script src="js/components/icons.js"></script>
+    <script src="js/components/errorBoundary.js"></script>
+
+    <!-- 2. Utilities -->
+    <script src="js/utils/utils.js"></script>
+    <script src="js/utils/accessibility.js"></script>
+
+    <!-- 3. Configuration -->
+    <script src="js/config/labels.js"></script>
+
+    <!-- 4. Data -->
+    <script src="js/data/sample-data.js"></script>
+
+    <!-- 5. Core modules -->
+    <script src="js/core/mermaid-generator.js"></script>
+    <script src="js/core/excel-handler.js"></script>
+    <script src="js/core/exports.js"></script>
+
+    <!-- 6. Commands (undo/redo) -->
+    <script src="js/commands/snapshotHistory.js"></script>
+
+    <!-- 7. Main App (must be loaded last) -->
+    <script src="js/app.js"></script>
+</body>
+</html>
