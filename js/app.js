@@ -40,6 +40,8 @@
             parseInt(localStorage.getItem('tablePanelWidth')) || 33
         );
         const [isResizing, setIsResizing] = useState(false);
+        const [showReadmeModal, setShowReadmeModal] = useState(false);
+        const [showHelpModal, setShowHelpModal] = useState(false);
 
         // Refs
         const canvasRef = useRef(null);
@@ -731,16 +733,13 @@
                         key: 'toolbar-flex',
                         className: "flex items-center gap-2"
                     }, [
-                        // Title
-                        React.createElement('div', {
-                            key: 'title',
-                            className: "flex items-center gap-2 mr-4"
-                        }, [
-                            React.createElement('h1', {
-                                key: 'h1',
-                                className: "text-lg font-semibold text-gray-800"
-                            }, "Slim Graph")
-                        ]),
+                        // Help button
+                        React.createElement('button', {
+                            key: 'help-btn',
+                            onClick: () => setShowHelpModal(true),
+                            className: "flex items-center justify-center w-6 h-6 text-sm font-bold text-blue-600 bg-blue-100 hover:bg-blue-200 rounded-full mr-2",
+                            title: "Help"
+                        }, "?"),
 
                         // File operations
                         React.createElement('div', {
@@ -1489,6 +1488,139 @@
                         className: "px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
                     }, "Delete")
                 ])
+            ])),
+
+            // Help modal
+            showHelpModal && React.createElement('div', {
+                key: 'help-modal',
+                className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
+                onClick: () => setShowHelpModal(false)
+            }, React.createElement('div', {
+                key: 'modal-content',
+                className: "bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto",
+                onClick: (e) => e.stopPropagation()
+            }, [
+                React.createElement('h3', {
+                    key: 'title',
+                    className: "text-lg font-semibold mb-4 text-gray-800"
+                }, "Help"),
+
+                // Data Model
+                React.createElement('div', { key: 'data-model', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Data Model"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Group | Node | Linked To | Label"),
+                    React.createElement('p', { key: 'id', className: "text-xs text-gray-500 mt-1" }, "ID = Group-Node (auto-generated, refs auto-update on rename)")
+                ]),
+
+                // Group Operations
+                React.createElement('div', { key: 'group-ops', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Group Operations"),
+                    React.createElement('table', { key: 't', className: "w-full text-xs" }, [
+                        React.createElement('tbody', { key: 'tb' }, [
+                            React.createElement('tr', { key: '1' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Collapse / Expand"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "chevron on row (table only)")
+                            ]),
+                            React.createElement('tr', { key: '2' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Hide / Show"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "eye on row (canvas)")
+                            ]),
+                            React.createElement('tr', { key: '3' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "All groups"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "icons in header")
+                            ])
+                        ])
+                    ])
+                ]),
+
+                // Node Operations
+                React.createElement('div', { key: 'node-ops', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Node Operations"),
+                    React.createElement('table', { key: 't', className: "w-full text-xs" }, [
+                        React.createElement('tbody', { key: 'tb' }, [
+                            React.createElement('tr', { key: '1' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Delete"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "trash icon (* if referenced)")
+                            ]),
+                            React.createElement('tr', { key: '2' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Duplicate"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "copy icon on row")
+                            ]),
+                            React.createElement('tr', { key: '3' }, [
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Clear link"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "X next to Linked To")
+                            ])
+                        ])
+                    ])
+                ]),
+
+                // Visual Link Mode
+                React.createElement('div', { key: 'link-mode', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Visual Link Mode"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Click link icon \u2192 click target \u2192 linked. Esc to cancel.")
+                ]),
+
+                // Canvas
+                React.createElement('div', { key: 'canvas', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Canvas"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Drag = pan | Scroll = zoom | Fit = reset")
+                ]),
+
+                // Validation
+                React.createElement('div', { key: 'validation', className: "mb-4" }, [
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Validation"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "\uD83D\uDD34 Broken link | \uD83D\uDFE1 Duplicate ID")
+                ]),
+
+                // Disclaimer
+                React.createElement('p', {
+                    key: 'disclaimer',
+                    className: "text-xs text-red-600 mt-4 pt-3 border-t border-gray-200"
+                }, "Disclaimer: This application is provided as-is for demonstration purposes. The developers assume no responsibility for data loss, errors, or any damages resulting from its use."),
+
+                React.createElement('button', {
+                    key: 'close',
+                    onClick: () => setShowHelpModal(false),
+                    className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                }, "Close")
+            ])),
+
+            // Readme modal
+            showReadmeModal && React.createElement('div', {
+                key: 'readme-modal',
+                className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
+                onClick: () => setShowReadmeModal(false)
+            }, React.createElement('div', {
+                key: 'modal-content',
+                className: "bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4",
+                onClick: (e) => e.stopPropagation()
+            }, [
+                React.createElement('h3', {
+                    key: 'title',
+                    className: "text-lg font-semibold mb-4 text-gray-800"
+                }, "AIdiagram.app"),
+                React.createElement('div', {
+                    key: 'content',
+                    className: "text-sm text-gray-600 space-y-3"
+                }, [
+                    React.createElement('p', { key: 'p1' },
+                        "This application is provided for demonstration and testing purposes only."
+                    ),
+                    React.createElement('p', { key: 'p2' },
+                        "The developers make no warranties regarding accuracy, reliability, or fitness for any particular purpose. Use at your own risk."
+                    ),
+                    React.createElement('p', { key: 'p3' },
+                        "The developers are not responsible for any damages, data loss, or other issues arising from use of this application."
+                    ),
+                    React.createElement('p', { key: 'p4', className: "text-xs text-gray-400 pt-2" },
+                        "By using this application, you acknowledge and accept these terms."
+                    )
+                ]),
+                React.createElement('button', {
+                    key: 'close',
+                    onClick: () => setShowReadmeModal(false),
+                    className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                }, "Close")
             ]))
         ]);
     }
