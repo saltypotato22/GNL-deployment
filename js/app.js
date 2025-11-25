@@ -1650,8 +1650,14 @@
             }, [
                 React.createElement('h3', {
                     key: 'title',
-                    className: "text-lg font-semibold mb-4"
+                    className: "text-lg font-semibold mb-3"
                 }, "Export"),
+
+                // Red disclaimer
+                React.createElement('p', {
+                    key: 'disclaimer',
+                    className: "text-xs text-red-600 mb-3 pb-2 border-b border-red-200"
+                }, "Disclaimer: This application is provided as-is for demonstration purposes only. The developers assume no responsibility for data loss, errors, or any damages resulting from its use."),
 
                 // Data Formats Section
                 React.createElement('div', {
