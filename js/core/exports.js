@@ -26,25 +26,25 @@
             const grandparent = parent ? parent.parentElement : null;
 
             let fontSize = '14px';
-            let fontWeight = '500';  // Medium weight for better readability
+            let fontWeight = '400';  // Normal weight - clean rendering
             let fill = '#333';
 
             // Check if this is a cluster/group label (usually has cluster-label class)
             if (parent && parent.classList && parent.classList.contains('cluster-label')) {
                 fontSize = '12px';
-                fontWeight = '600';  // Bolder for group titles
+                fontWeight = '600';  // Bold for group titles only
                 fill = '#333';
             }
             // Check if this is an edge label
             else if (grandparent && grandparent.classList && grandparent.classList.contains('edgeLabel')) {
                 fontSize = '12px';
-                fontWeight = '500';
+                fontWeight = '400';  // Normal weight
                 fill = '#333';
             }
             // Node labels
             else {
                 fontSize = '14px';
-                fontWeight = '500';
+                fontWeight = '400';  // Normal weight
                 fill = '#333';
             }
 
@@ -53,11 +53,11 @@
             if (div) {
                 const computedStyle = div.style;
                 if (computedStyle.fontSize) fontSize = computedStyle.fontSize;
-                if (computedStyle.fontWeight) fontWeight = computedStyle.fontWeight;
+                // Don't inherit font-weight from HTML - use our clean weights
                 if (computedStyle.color) fill = computedStyle.color;
             }
 
-            // Create SVG text element with better styling
+            // Create SVG text element with clean rendering
             const svgText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             svgText.setAttribute('x', parseFloat(x) + parseFloat(foWidth) / 2);
             svgText.setAttribute('y', parseFloat(y) + parseFloat(foHeight) / 2 + 4);
@@ -68,8 +68,10 @@
             svgText.setAttribute('font-family', '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif');
             svgText.setAttribute('font-weight', fontWeight);
             svgText.setAttribute('fill', fill);
-            // Add slight letter spacing for better readability
-            svgText.setAttribute('letter-spacing', '0.01em');
+            // Prevent stroke from causing "dirty" double-line effect
+            svgText.setAttribute('stroke', 'none');
+            // Hint for crisp text rendering
+            svgText.setAttribute('style', 'paint-order: stroke fill');
             svgText.textContent = text.trim();
 
             // Replace foreignObject with text
@@ -85,7 +87,7 @@
      * @param {String} filename - Output filename
      */
     const exportCSV = function(nodes, filename) {
-        // Use PapaParse to generate CSV
+        // Use PapaParse to generate CSV (slim 5-column format)
         const csv = Papa.unparse(nodes, {
             header: true,
             columns: [
@@ -93,10 +95,7 @@
                 'Node_xA',
                 'ID_xA',
                 'Linked_Node_ID_xA',
-                'Hidden_Node_xB',
-                'Hidden_Link_xB',
-                'Link_Label_xB',
-                'Link_Arrow_xB'
+                'Link_Label_xB'
             ]
         });
 
@@ -581,12 +580,13 @@
         // Determine orientation
         const orientation = width > height ? 'landscape' : 'portrait';
 
-        // Create PDF
+        // Create PDF with compression
         const { jsPDF } = window.jspdf;
         const pdf = new jsPDF({
             orientation: orientation,
             unit: 'pt',
-            format: [width + 40, height + 40]
+            format: [width + 40, height + 40],
+            compress: true
         });
 
         // Convert SVG to base64 data URL (prevents canvas tainting)
@@ -602,8 +602,11 @@
             image.src = svgUrl;
         });
 
-        // Create canvas at higher resolution for better quality
-        const scale = 2;
+        // Smart scaling: use 1.5x for reasonable quality without bloating file size
+        // For very large diagrams (>2000px), reduce to 1x
+        const maxDimension = Math.max(width, height);
+        const scale = maxDimension > 2000 ? 1 : 1.5;
+
         const canvas = document.createElement('canvas');
         canvas.width = width * scale;
         canvas.height = height * scale;
@@ -617,9 +620,9 @@
         // Draw the SVG
         ctx.drawImage(img, 0, 0);
 
-        // Convert canvas to PNG data URL and add to PDF
-        const imgData = canvas.toDataURL('image/png');
-        pdf.addImage(imgData, 'PNG', 20, 20, width, height);
+        // Use JPEG with 90% quality - much smaller than PNG
+        const imgData = canvas.toDataURL('image/jpeg', 0.90);
+        pdf.addImage(imgData, 'JPEG', 20, 20, width, height);
 
         pdf.save(filename || 'graph.pdf');
     };

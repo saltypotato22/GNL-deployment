@@ -1,277 +1,108 @@
 /**
  * Sample Data Module
- * META example: The app explains itself
+ * Multiple demos for Slim Graph
  */
 
 (function(window) {
     'use strict';
 
-    // Welcome to Slim Graph - A self-documenting introduction
-    const sampleData = [
-        // === START HERE ===
-        {
-            Group_xA: 'Start Here',
-            Node_xA: 'Try This First',
-            ID_xA: 'Start Here-Try This First',
-            Linked_Node_ID_xA: 'Core Features-Visual Link Mode',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'click the',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Start Here',
-            Node_xA: 'Import Your Data',
-            ID_xA: 'Start Here-Import Your Data',
-            Linked_Node_ID_xA: 'Core Features-See It Visualized',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'to instantly',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Start Here',
-            Node_xA: 'Edit Any Cell',
-            ID_xA: 'Start Here-Edit Any Cell',
-            Linked_Node_ID_xA: 'Core Features-Graph Updates Live',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'and watch',
-            Link_Arrow_xB: 'To'
-        },
+    // Helper to create node objects
+    const node = (group, nodeName, linkedTo, label) => ({
+        Group_xA: group,
+        Node_xA: nodeName,
+        ID_xA: `${group}-${nodeName}`,
+        Linked_Node_ID_xA: linkedTo || '',
+        Hidden_Node_xB: 0,
+        Hidden_Link_xB: 0,
+        Link_Label_xB: label || '',
+        Link_Arrow_xB: 'To'
+    });
 
-        // === CORE FEATURES ===
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Visual Link Mode',
-            ID_xA: 'Core Features-Visual Link Mode',
-            Linked_Node_ID_xA: 'Core Features-Click Any ID',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'then',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Click Any ID',
-            ID_xA: 'Core Features-Click Any ID',
-            Linked_Node_ID_xA: 'Core Features-Nodes Connect',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'and',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Nodes Connect',
-            ID_xA: 'Core Features-Nodes Connect',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'See It Visualized',
-            ID_xA: 'Core Features-See It Visualized',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Graph Updates Live',
-            ID_xA: 'Core Features-Graph Updates Live',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Group Controls',
-            ID_xA: 'Core Features-Group Controls',
-            Linked_Node_ID_xA: 'Core Features-Hide or Collapse',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'to',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Hide or Collapse',
-            ID_xA: 'Core Features-Hide or Collapse',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'Export Options',
-            ID_xA: 'Core Features-Export Options',
-            Linked_Node_ID_xA: 'Core Features-PNG Excel Mermaid',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'include',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Core Features',
-            Node_xA: 'PNG Excel Mermaid',
-            ID_xA: 'Core Features-PNG Excel Mermaid',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-
-        // === DATA FORMAT ===
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'Just 4 Columns',
-            ID_xA: 'Data Format-Just 4 Columns',
-            Linked_Node_ID_xA: 'Data Format-Group Node Link Label',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'which are',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'Group Node Link Label',
-            ID_xA: 'Data Format-Group Node Link Label',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'CSV or Excel',
-            ID_xA: 'Data Format-CSV or Excel',
-            Linked_Node_ID_xA: 'Data Format-Import and Export',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'for easy',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'Import and Export',
-            ID_xA: 'Data Format-Import and Export',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'Rename a Node',
-            ID_xA: 'Data Format-Rename a Node',
-            Linked_Node_ID_xA: 'Core Features-Graph Updates Live',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'refs auto-update',
-            Link_Arrow_xB: 'To'
-        },
-
-        // === PHILOSOPHY ===
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'No Build Step',
-            ID_xA: 'Philosophy-No Build Step',
-            Linked_Node_ID_xA: 'Philosophy-Just Open the HTML',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'means',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'Just Open the HTML',
-            ID_xA: 'Philosophy-Just Open the HTML',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: '256KB Total',
-            ID_xA: 'Philosophy-256KB Total',
-            Linked_Node_ID_xA: 'Philosophy-Loads Instantly',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'so it',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'Loads Instantly',
-            ID_xA: 'Philosophy-Loads Instantly',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'Your Data Stays Local',
-            ID_xA: 'Philosophy-Your Data Stays Local',
-            Linked_Node_ID_xA: 'Philosophy-No Server Needed',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'because',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'No Server Needed',
-            ID_xA: 'Philosophy-No Server Needed',
-            Linked_Node_ID_xA: '',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: '',
-            Link_Arrow_xB: 'To'
-        },
-
-        // === CROSS-GROUP CONNECTIONS ===
-        {
-            Group_xA: 'Philosophy',
-            Node_xA: 'Open Source',
-            ID_xA: 'Philosophy-Open Source',
-            Linked_Node_ID_xA: 'Data Format-CSV or Excel',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'uses standard',
-            Link_Arrow_xB: 'To'
-        },
-        {
-            Group_xA: 'Data Format',
-            Node_xA: 'Simple Format',
-            ID_xA: 'Data Format-Simple Format',
-            Linked_Node_ID_xA: 'Philosophy-No Build Step',
-            Hidden_Node_xB: 0,
-            Hidden_Link_xB: 0,
-            Link_Label_xB: 'enables',
-            Link_Arrow_xB: 'To'
-        }
+    // === QUICK TOUR (Default) - App feature overview ===
+    const quickTour = [
+        node('Data Format', 'Group Column', 'Data Format-Node Column', 'contains'),
+        node('Data Format', 'Node Column', 'Data Format-Linked To', 'connects via'),
+        node('Data Format', 'Linked To', '', ''),
+        node('Data Format', 'Label', '', ''),
+        node('Group Operations', 'Hide from Canvas', 'Canvas Features-Diagram Updates', 'eye icon'),
+        node('Group Operations', 'Collapse in Table', '', ''),
+        node('Group Operations', 'Show All Groups', '', ''),
+        node('Group Operations', 'Clone Group', '', ''),
+        node('Group Operations', 'Delete Entire Group', '', ''),
+        node('Node Operations', 'Add New Row', '', ''),
+        node('Node Operations', 'Delete Node', '', ''),
+        node('Node Operations', 'Duplicate Row', '', ''),
+        node('Node Operations', 'Click-to-Link', 'Node Operations-Add New Row', 'then click'),
+        node('Node Operations', 'Clear Link', '', ''),
+        node('Table Operations', 'Edit Any Cell', 'Canvas Features-Diagram Updates', 'click + type'),
+        node('Table Operations', 'Sort by Column', '', ''),
+        node('Table Operations', 'Undo and Redo', '', ''),
+        node('Table Operations', 'Optimal Fit', '', ''),
+        node('Canvas Features', 'Zoom In/Out', '', ''),
+        node('Canvas Features', 'Pan Around', '', ''),
+        node('Canvas Features', 'Toggle TB/LR', '', ''),
+        node('Canvas Features', 'Fit to Screen', '', ''),
+        node('Canvas Features', 'Diagram Updates', 'Data Format-Group Column', 'from table'),
+        node('Top Menu', 'Import File', 'Data Format-Group Column', 'CSV or Excel'),
+        node('Top Menu', 'Export Options', '', ''),
+        node('Top Menu', 'Clear Table', '', ''),
+        node('Top Menu', 'Help Button', '', ''),
+        node('Top Menu', 'Load Example', '', '')
     ];
 
-    // Expose sample data to global namespace
+    // === HOME NETWORK - Practical networking example ===
+    const homeNetwork = [
+        node('ISP', 'Fiber Entry', 'ISP-ONT', 'fiber optic'),
+        node('ISP', 'ONT', 'Network Core-Router WAN', 'Ethernet'),
+        node('Network Core', 'Router WAN', 'Network Core-Router', 'Cat6'),
+        node('Network Core', 'Router', 'Network Core-Switch', 'Ethernet'),
+        node('Network Core', 'Switch', 'Wired Devices-Desktop', 'Cat6'),
+        node('Network Core', 'WiFi AP', 'Wireless-MacBook', '5GHz'),
+        node('Wired Devices', 'Desktop', 'Network Core-Switch', 'Cat6'),
+        node('Wired Devices', 'NAS', 'Network Core-Switch', 'Cat6'),
+        node('Wired Devices', 'Smart TV', 'Network Core-Switch', 'Cat6'),
+        node('Wired Devices', 'Game Console', 'Network Core-Switch', 'Cat6'),
+        node('Wireless', 'MacBook', '', ''),
+        node('Wireless', 'iPhone', 'Network Core-WiFi AP', '5GHz'),
+        node('Wireless', 'iPad', 'Network Core-WiFi AP', '5GHz'),
+        node('Wireless', 'Work Laptop', 'Network Core-WiFi AP', '5GHz'),
+        node('Smart Home', 'Hub', 'Network Core-Router', 'Ethernet'),
+        node('Smart Home', 'Thermostat', 'Smart Home-Hub', 'Zigbee'),
+        node('Smart Home', 'Door Lock', 'Smart Home-Hub', 'Zigbee'),
+        node('Smart Home', 'Cameras', 'Smart Home-Hub', 'WiFi'),
+        node('Smart Home', 'Light Switches', 'Smart Home-Hub', 'Zigbee'),
+        node('Backup', 'UPS', 'Network Core-Router', 'power')
+    ];
+
+    // === INDUSTRIAL WIRING - PLC/Sensor wiring diagram ===
+    const industrialWiring = [
+        node('DC Backbone', '24V', '', ''),
+        node('DC Backbone', '0V', '', ''),
+        node('PLC Rack', '24V Feed', 'DC Backbone-24V', 'F01-Red'),
+        node('PLC Rack', 'Ground', 'DC Backbone-0V', 'F01-Black'),
+        node('PLC Rack', 'DO_Start', 'Motor 1-Start Trigger', 'W102'),
+        node('PLC Rack', 'DI_Running', 'Motor 1-Status', 'W103'),
+        node('PLC Rack', 'AI_Temperature', '', ''),
+        node('Motor 1', '24V Supply', 'DC Backbone-24V', 'F02-Red'),
+        node('Motor 1', 'Ground', 'DC Backbone-0V', 'F02-Black'),
+        node('Motor 1', 'Start Trigger', '', ''),
+        node('Motor 1', 'Status', '', ''),
+        node('Sensor Array', 'Power +', 'DC Backbone-24V', 'F03-Red'),
+        node('Sensor Array', 'Power -', 'DC Backbone-0V', 'F03-Black'),
+        node('Sensor Array', 'Signal Out', 'PLC Rack-AI_Temperature', 'SIG-101')
+    ];
+
+    // Expose demos to global namespace
     window.GraphApp.data = {
-        sample: sampleData
+        // Default demo (loads on startup)
+        sample: quickTour,
+
+        // All available demos
+        demos: {
+            'Quick Tour': quickTour,
+            'Home Network': homeNetwork,
+            'Industrial Wiring': industrialWiring
+        }
     };
 
 })(window);

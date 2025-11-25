@@ -7,6 +7,23 @@
     'use strict';
 
     /**
+     * Sanitize label text for Mermaid syntax
+     * Prevents injection of characters that break Mermaid parsing
+     * @param {String} label - Raw label text
+     * @returns {String} Sanitized label
+     */
+    const sanitizeLabel = function(label) {
+        if (!label) return '';
+        return String(label)
+            .replace(/"/g, "'")      // Quotes break label strings
+            .replace(/\[/g, "(")     // Brackets could end node definitions
+            .replace(/\]/g, ")")
+            .replace(/\|/g, "│")     // Pipe delimits link labels (use unicode)
+            .replace(/</g, "‹")      // Angle brackets could be HTML/arrows
+            .replace(/>/g, "›");
+    };
+
+    /**
      * Generate Mermaid graph syntax from node data
      * @param {Array} nodes - Array of node objects
      * @param {Object} settings - Diagram settings { direction: 'TB'|'LR'|'RL'|'BT', curve: 'basis'|'linear'|'step', ... }
@@ -64,21 +81,13 @@
             const groupNodes = groups[groupName];
 
             // Create subgraph
-            mermaid += `\n    subgraph ${sanitizeID(groupName)}["${groupName}"]\n`;
+            mermaid += `\n    subgraph ${sanitizeID(groupName)}["${sanitizeLabel(groupName)}"]\n`;
 
             // Add nodes in this group
             groupNodes.forEach(node => {
                 const nodeId = sanitizeID(node.ID_xA);
-                const nodeLabel = node.Node_xA;
-
-                // Choose node shape based on whether it has links
-                const hasOutgoingLink = node.Linked_Node_ID_xA && !node.Hidden_Link_xB;
-
-                if (hasOutgoingLink) {
-                    mermaid += `        ${nodeId}["${nodeLabel}"]\n`;
-                } else {
-                    mermaid += `        ${nodeId}["${nodeLabel}"]\n`;
-                }
+                const nodeLabel = sanitizeLabel(node.Node_xA);
+                mermaid += `        ${nodeId}["${nodeLabel}"]\n`;
             });
 
             mermaid += `    end\n`;
@@ -100,7 +109,8 @@
 
             const fromId = sanitizeID(node.ID_xA);
             const toId = sanitizeID(node.Linked_Node_ID_xA);
-            const label = node.Link_Label_xB || '';
+            const rawLabel = node.Link_Label_xB || '';
+            const label = sanitizeLabel(rawLabel); // Sanitize to prevent Mermaid syntax injection
             const arrow = node.Link_Arrow_xB || 'To';
 
             // Generate appropriate arrow syntax

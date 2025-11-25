@@ -101,16 +101,13 @@
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Sheet1');
 
-        // Add headers
+        // Add headers (slim 5-column format)
         worksheet.addRow([
             'Group_xA',
             'Node_xA',
             'ID_xA',
             'Linked Node ID_xA',
-            'Hidden Node_xB',
-            'Hidden Link_xB',
-            'Link Label_xB',
-            'Link Arrow_xB'
+            'Link Label_xB'
         ]);
 
         // Style header row
@@ -139,10 +136,7 @@
                 node.Node_xA,
                 '', // Will be replaced with formula
                 '', // Will be set below with formula or value
-                node.Hidden_Node_xB || 0,
-                node.Hidden_Link_xB || 0,
-                node.Link_Label_xB || '',
-                node.Link_Arrow_xB || 'To'
+                node.Link_Label_xB || ''
             ]);
 
             // Set formula for ID_xA (column C)

@@ -237,6 +237,37 @@ input[type="number"] {
     white-space: normal;
 }
 
+/* Make table inputs fill their cells for visual consistency */
+table .table-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Table layout: fixed for consistent column widths via colgroup */
+table {
+    table-layout: fixed;
+    width: auto;
+}
+
+/* Table cells use overflow hidden to prevent content from breaking layout */
+table td {
+    overflow: hidden;
+}
+
+/* Flex containers should not force column width */
+table td > div {
+    display: inline-flex !important;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+/* Buttons in table cells should be compact */
+table td button {
+    padding: 0.125rem !important;
+    min-width: 0 !important;
+    flex-shrink: 0;
+}
+
 /* ==================== */
 /* Accessibility Styles */
 /* ==================== */

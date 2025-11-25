@@ -13,8 +13,8 @@
         // Get icons from namespace
         const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
 
-        // State Management
-        const [nodes, setNodes] = useState([]);
+        // State Management - Load sample data by default
+        const [nodes, setNodes] = useState(() => window.GraphApp.data.sample || []);
         const [errors, setErrors] = useState([]);
         const [settings, setSettings] = useState({
             direction: 'TB', // TB, BT, LR, or RL
@@ -36,23 +36,40 @@
         const [isPanning, setIsPanning] = useState(false);
         const [panStart, setPanStart] = useState({ x: 0, y: 0 });
         const [prevDirection, setPrevDirection] = useState('TB');
-        const [tablePanelWidth, setTablePanelWidth] = useState(
-            parseInt(localStorage.getItem('tablePanelWidth')) || 33
-        );
+        const [prevHideUnlinked, setPrevHideUnlinked] = useState(false);
+        const [tablePanelWidth, setTablePanelWidth] = useState(33); // Will be auto-calculated on load
         const [isResizing, setIsResizing] = useState(false);
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
+        const [showDemoMenu, setShowDemoMenu] = useState(false);
+        const [colWidths, setColWidths] = useState({
+            Group_xA: 60,
+            Node_xA: 60,
+            ID_xA: 60,
+            Linked_Node_ID_xA: 90,
+            Link_Label_xB: 70
+        });
 
         // Refs
         const canvasRef = useRef(null);
         const fileInputRef = useRef(null);
         const panOffsetRef = useRef({ x: 0, y: 0 });
         const zoomRef = useRef(100);
+        const colWidthsRef = useRef(colWidths);
+
+        // Utility: Calculate dynamic input size (min: 3 chars, max: 40 chars)
+        const calcInputSize = useCallback((value, min = 3, max = 40) => {
+            const len = (value || '').length;
+            return Math.max(min, Math.min(max, len || min));
+        }, []);
 
         // History Manager for undo/redo
         const historyRef = useRef(new window.GraphApp.SnapshotHistory(50));
         const [canUndo, setCanUndo] = useState(false);
         const [canRedo, setCanRedo] = useState(false);
+
+        // Track first render to auto-fit on load
+        const isFirstRenderRef = useRef(true);
 
         // Keep refs in sync with state
         useEffect(() => {
@@ -63,10 +80,21 @@
             zoomRef.current = settings.zoom;
         }, [settings.zoom]);
 
-        // Save table panel width to localStorage
         useEffect(() => {
-            localStorage.setItem('tablePanelWidth', tablePanelWidth);
-        }, [tablePanelWidth]);
+            colWidthsRef.current = colWidths;
+        }, [colWidths]);
+
+        // Close demo menu when clicking outside
+        useEffect(() => {
+            if (!showDemoMenu) return;
+            const handleClick = (e) => {
+                if (!e.target.closest('[data-demos-dropdown]')) {
+                    setShowDemoMenu(false);
+                }
+            };
+            document.addEventListener('click', handleClick);
+            return () => document.removeEventListener('click', handleClick);
+        }, [showDemoMenu]);
 
         // Calculate incoming links count for each node
         const incomingLinksCount = useMemo(() => {
@@ -78,6 +106,22 @@
                 }
             });
             return counts;
+        }, [nodes]);
+
+        // Calculate which groups have external references (nodes referenced from outside the group)
+        const groupsWithExternalRefs = useMemo(() => {
+            const groups = new Set();
+            nodes.forEach(sourceNode => {
+                if (sourceNode.Linked_Node_ID_xA && !sourceNode.Hidden_Link_xB) {
+                    // Find the target node
+                    const targetNode = nodes.find(n => n.ID_xA === sourceNode.Linked_Node_ID_xA);
+                    // If target exists and is in a DIFFERENT group, that group has external refs
+                    if (targetNode && targetNode.Group_xA !== sourceNode.Group_xA) {
+                        groups.add(targetNode.Group_xA);
+                    }
+                }
+            });
+            return groups;
         }, [nodes]);
 
         // Map errors to row indices for highlighting
@@ -181,6 +225,35 @@
             return () => document.removeEventListener('keydown', handleKeyDown);
         }, [handleUndo, handleRedo]);
 
+        // Escape key handler for modals and linking mode
+        useEffect(() => {
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    setShowExportModal(false);
+                    setDeleteConfirm(null);
+                    setShowHelpModal(false);
+                    setShowReadmeModal(false);
+                    setLinkingMode({ active: false, targetRowIndex: null });
+                }
+            };
+
+            document.addEventListener('keydown', handleEscape);
+            return () => document.removeEventListener('keydown', handleEscape);
+        }, []);
+
+        // Compute column widths dynamically based on content
+        useEffect(() => {
+            // Debounce to avoid jitter during rapid edits
+            const timeoutId = setTimeout(() => {
+                if (nodes.length > 0) {
+                    const newWidths = window.GraphApp.utils.computeColumnWidths(nodes, showIDColumn);
+                    setColWidths(newWidths);
+                }
+            }, 50);
+
+            return () => clearTimeout(timeoutId);
+        }, [nodes, showIDColumn]);
+
         // Apply zoom and pan to diagram
         const applyTransform = useCallback((zoomPercent, panX, panY) => {
             const container = document.getElementById('mermaid-container');
@@ -259,14 +332,30 @@
         const renderDiagram = useCallback(async () => {
             setIsRendering(true);
 
-            // Detect if direction changed
+            // Detect if direction or hide-unlinked changed (requires fit to screen)
             const directionChanged = settings.direction !== prevDirection;
+            const hideUnlinkedChanged = hideUnlinkedNodes !== prevHideUnlinked;
+            const isFirstRender = isFirstRenderRef.current;
+            const needsFitToScreen = directionChanged || hideUnlinkedChanged || isFirstRender;
+
+            // Clear first render flag
+            if (isFirstRender) {
+                isFirstRenderRef.current = false;
+            }
 
             try{
                 const mermaidSyntax = window.GraphApp.core.generateMermaid(nodes, settings, hiddenGroups, hideUnlinkedNodes);
                 await window.GraphApp.core.renderMermaid(mermaidSyntax, 'mermaid-container');
 
-                // Position cluster labels at top-left corner (skip compact padding to preserve edges)
+                // Update tracking state immediately (before timeout)
+                if (directionChanged) {
+                    setPrevDirection(settings.direction);
+                }
+                if (hideUnlinkedChanged) {
+                    setPrevHideUnlinked(hideUnlinkedNodes);
+                }
+
+                // Single timeout to avoid race condition between cluster positioning and zoom
                 setTimeout(() => {
                     // Position cluster labels at top-left corner
                     const clusters = document.querySelectorAll('#mermaid-container .cluster');
@@ -280,26 +369,22 @@
                             label.setAttribute('transform', `translate(${newX}, ${newY})`);
                         }
                     });
-                }, 100);
 
-                // If direction changed, auto-fit with slight delay for Mermaid to finish
-                if (directionChanged) {
-                    setPrevDirection(settings.direction);
-                    setTimeout(() => {
+                    // After positioning, handle zoom/pan
+                    if (needsFitToScreen) {
                         fitDiagramToScreen();
-                    }, 100);
-                } else {
-                    // Normal: reapply current zoom/pan
-                    applyTransform(zoomRef.current, panOffsetRef.current.x, panOffsetRef.current.y);
-                }
+                    } else {
+                        applyTransform(zoomRef.current, panOffsetRef.current.x, panOffsetRef.current.y);
+                    }
+                }, 100);
 
                 setIsRendering(false);
             } catch (error) {
                 console.error('Error rendering diagram:', error);
-                setErrors([...errors, 'Failed to render diagram: ' + error.message]);
+                setErrors(prev => [...prev, 'Failed to render diagram: ' + error.message]);
                 setIsRendering(false);
             }
-        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, applyTransform, fitDiagramToScreen, prevDirection]);
+        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, applyTransform, fitDiagramToScreen, prevDirection, prevHideUnlinked]);
 
         // Render diagram when nodes or settings change
         useEffect(() => {
@@ -361,6 +446,55 @@
                 e.currentTarget.style.cursor = 'grab';
             }
         }, [isPanning]);
+
+        // Calculate optimal table width to fit all content without truncation
+        const calculateOptimalTableWidth = useCallback(() => {
+            // Sum fixed icon column widths (px)
+            const fixedColumnsWidth = 40 + 32 + 32 + 36 + 32 + 32; // Row#, Collapse, Visibility, Links, Duplicate, Delete
+
+            // Use ref to get latest colWidths (avoids stale closure)
+            const currentColWidths = colWidthsRef.current;
+
+            // Sum dynamic text column widths from state
+            const textColumnsWidth =
+                currentColWidths.Group_xA +
+                currentColWidths.Node_xA +
+                (showIDColumn ? currentColWidths.ID_xA : 0) +
+                currentColWidths.Linked_Node_ID_xA +
+                currentColWidths.Link_Label_xB;
+
+            // Add buffer for table padding, margins, scrollbar
+            const tablePadding = 40;
+
+            // Calculate minimum table width needed
+            const minTableWidth = fixedColumnsWidth + textColumnsWidth + tablePadding;
+
+            // Get viewport width
+            const viewportWidth = window.innerWidth;
+
+            // Calculate percentage
+            let percentage = Math.round((minTableWidth / viewportWidth) * 100);
+
+            // Clamp between 20% and 80%
+            percentage = Math.max(20, Math.min(80, percentage));
+
+            setTablePanelWidth(percentage);
+        }, [showIDColumn]); // Uses colWidthsRef instead of colWidths to avoid stale closures
+
+        // Auto-calculate optimal table width on initial load
+        const hasAutoFitRef = useRef(false);
+        useEffect(() => {
+            // Run once when we have data, with a small delay to ensure DOM is ready
+            if (!hasAutoFitRef.current && nodes.length > 0) {
+                hasAutoFitRef.current = true;
+                // Use requestAnimationFrame + setTimeout to ensure layout is complete
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        calculateOptimalTableWidth();
+                    }, 100);
+                });
+            }
+        }, [nodes.length, calculateOptimalTableWidth]);
 
         const handleMouseLeave = useCallback((e) => {
             if (isPanning) {
@@ -458,28 +592,73 @@
             }
         }, [nodes]);
 
+        // Delete entire group
+        const handleDeleteGroup = useCallback((groupName) => {
+            const groupNodes = nodes.filter(n => n.Group_xA === groupName);
+            const nodeCount = groupNodes.length;
+
+            // Check if any nodes in this group are referenced by nodes outside the group
+            const externalReferences = nodes.filter(n =>
+                n.Group_xA !== groupName &&
+                groupNodes.some(gn => gn.ID_xA === n.Linked_Node_ID_xA)
+            );
+
+            if (externalReferences.length > 0) {
+                setDeleteConfirm({
+                    groupName,
+                    message: `Delete entire group "${groupName}" (${nodeCount} nodes)? ${externalReferences.length} external reference(s) will break.`,
+                    isReferenced: true,
+                    isGroup: true
+                });
+            } else {
+                setDeleteConfirm({
+                    groupName,
+                    message: `Delete entire group "${groupName}" (${nodeCount} nodes)?`,
+                    isReferenced: false,
+                    isGroup: true
+                });
+            }
+        }, [nodes]);
+
         // Duplicate node
         const handleDuplicateRow = useCallback((index) => {
             const nodeToDuplicate = nodes[index];
             const group = nodeToDuplicate.Group_xA;
+            const baseNodeName = nodeToDuplicate.Node_xA;
 
-            // Find unique name by appending "_?" until ID doesn't exist
-            let newNodeName = nodeToDuplicate.Node_xA + '_?';
-            let newID = `${group}-${newNodeName}`;
+            // Find unique name with _N suffix (same pattern as group duplication)
+            const escapedBase = baseNodeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`^${escapedBase}_(\\d+)$`);
 
-            while (nodes.some(n => n.ID_xA === newID)) {
-                newNodeName += '_?';
-                newID = `${group}-${newNodeName}`;
+            let maxSuffix = 0;
+
+            // Check if base name exists
+            if (nodes.some(n => n.Node_xA === baseNodeName && n.Group_xA === group)) {
+                maxSuffix = 1;
             }
+
+            // Find highest suffix number for this node name in this group
+            nodes.forEach(node => {
+                if (node.Group_xA === group) {
+                    const match = node.Node_xA.match(pattern);
+                    if (match) {
+                        const suffix = parseInt(match[1]);
+                        maxSuffix = Math.max(maxSuffix, suffix);
+                    }
+                }
+            });
+
+            const newNodeName = `${baseNodeName}_${maxSuffix + 1}`;
+            const newID = window.GraphApp.utils.generateID(group, newNodeName);
 
             const duplicatedNode = {
                 Group_xA: group,
                 Node_xA: newNodeName,
                 ID_xA: newID,
-                Linked_Node_ID_xA: nodeToDuplicate.Linked_Node_ID_xA,
+                Linked_Node_ID_xA: '',  // NO link cloning
                 Hidden_Node_xB: nodeToDuplicate.Hidden_Node_xB,
-                Hidden_Link_xB: nodeToDuplicate.Hidden_Link_xB,
-                Link_Label_xB: nodeToDuplicate.Link_Label_xB,
+                Hidden_Link_xB: 0,
+                Link_Label_xB: '',  // NO label cloning
                 Link_Arrow_xB: nodeToDuplicate.Link_Arrow_xB
             };
 
@@ -499,6 +678,52 @@
             // Save to history
             saveToHistory(newNodes);
         }, [nodes, saveToHistory]);
+
+        // Duplicate entire group
+        const handleDuplicateGroup = useCallback((groupName) => {
+            // Find all nodes in the group
+            const groupNodes = nodes.filter(n => n.Group_xA === groupName);
+
+            if (groupNodes.length === 0) return;
+
+            // Generate unique group name with _N suffix
+            const newGroupName = window.GraphApp.utils.generateUniqueGroupName(groupName, nodes);
+
+            // Clone nodes with new group name and NO links
+            const clonedNodes = groupNodes.map(node => ({
+                Group_xA: newGroupName,
+                Node_xA: node.Node_xA,
+                ID_xA: window.GraphApp.utils.generateID(newGroupName, node.Node_xA),
+                Linked_Node_ID_xA: '',  // NO links
+                Hidden_Node_xB: node.Hidden_Node_xB || 0,
+                Hidden_Link_xB: 0,
+                Link_Label_xB: '',  // NO labels
+                Link_Arrow_xB: node.Link_Arrow_xB || 'To'
+            }));
+
+            // Find insertion point (after last node of the group)
+            const lastGroupIndex = nodes.reduce((lastIdx, node, idx) => {
+                return node.Group_xA === groupName ? idx : lastIdx;
+            }, -1);
+
+            const newNodes = [
+                ...nodes.slice(0, lastGroupIndex + 1),
+                ...clonedNodes,
+                ...nodes.slice(lastGroupIndex + 1)
+            ];
+
+            setNodes(newNodes);
+
+            // Keep the new group collapsed
+            setCollapsedGroups(new Set([...collapsedGroups, newGroupName]));
+
+            // Validate after duplication
+            const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+            setErrors(validationErrors);
+
+            // Save to history
+            saveToHistory(newNodes);
+        }, [nodes, collapsedGroups, saveToHistory]);
 
         // Resize panel handlers
         const handleResizeMouseDown = useCallback(() => {
@@ -531,7 +756,20 @@
         // Confirm delete
         const confirmDelete = useCallback(() => {
             if (deleteConfirm) {
-                const newNodes = nodes.filter((_, i) => i !== deleteConfirm.index);
+                let newNodes;
+
+                if (deleteConfirm.isGroup) {
+                    // Delete entire group
+                    newNodes = nodes.filter(n => n.Group_xA !== deleteConfirm.groupName);
+                    // Also remove from collapsed groups
+                    const newCollapsedGroups = new Set(collapsedGroups);
+                    newCollapsedGroups.delete(deleteConfirm.groupName);
+                    setCollapsedGroups(newCollapsedGroups);
+                } else {
+                    // Delete single node
+                    newNodes = nodes.filter((_, i) => i !== deleteConfirm.index);
+                }
+
                 setNodes(newNodes);
                 setDeleteConfirm(null);
 
@@ -542,30 +780,61 @@
                 // Save to history
                 saveToHistory(newNodes);
             }
-        }, [deleteConfirm, nodes, saveToHistory]);
+        }, [deleteConfirm, nodes, collapsedGroups, saveToHistory]);
 
-        // Edit cell
+        // Edit cell - IMPORTANT: Create new object references to satisfy React immutability
         const handleCellEdit = useCallback((index, field, value) => {
-            const newNodes = [...nodes];
-            const oldNode = { ...newNodes[index] };
-            newNodes[index][field] = value;
+            // Deep-ish clone: new array with new objects (prevents state mutation)
+            const newNodes = nodes.map(n => ({ ...n }));
+            const oldNode = nodes[index]; // Reference original for comparison
 
-            // Auto-update ID if Group or Node changed AND track references
-            if (field === 'Group_xA' || field === 'Node_xA') {
-                const oldID = oldNode.ID_xA;
-                const newID = window.GraphApp.utils.generateID(
-                    newNodes[index].Group_xA,
-                    newNodes[index].Node_xA
-                );
-                newNodes[index].ID_xA = newID;
+            // Special case: editing Group_xA on a collapsed group
+            if (field === 'Group_xA' && collapsedGroups.has(oldNode.Group_xA)) {
+                const oldGroupName = oldNode.Group_xA;
+                const newGroupName = value;
 
-                // Excel-style reference tracking: update all references to old ID
-                if (oldID !== newID) {
-                    newNodes.forEach((node, i) => {
-                        if (node.Linked_Node_ID_xA === oldID) {
-                            newNodes[i].Linked_Node_ID_xA = newID;
-                        }
-                    });
+                // Update ALL nodes in this group
+                newNodes.forEach((node, i) => {
+                    if (node.Group_xA === oldGroupName) {
+                        const oldID = node.ID_xA;
+                        newNodes[i].Group_xA = newGroupName;
+                        newNodes[i].ID_xA = window.GraphApp.utils.generateID(newGroupName, node.Node_xA);
+
+                        // Update all references to this old ID
+                        newNodes.forEach((refNode, j) => {
+                            if (refNode.Linked_Node_ID_xA === oldID) {
+                                newNodes[j].Linked_Node_ID_xA = newNodes[i].ID_xA;
+                            }
+                        });
+                    }
+                });
+
+                // Update collapsed groups set
+                const newCollapsed = new Set(collapsedGroups);
+                newCollapsed.delete(oldGroupName);
+                newCollapsed.add(newGroupName);
+                setCollapsedGroups(newCollapsed);
+            } else {
+                // Normal cell edit
+                newNodes[index][field] = value;
+
+                // Auto-update ID if Group or Node changed AND track references
+                if (field === 'Group_xA' || field === 'Node_xA') {
+                    const oldID = oldNode.ID_xA;
+                    const newID = window.GraphApp.utils.generateID(
+                        newNodes[index].Group_xA,
+                        newNodes[index].Node_xA
+                    );
+                    newNodes[index].ID_xA = newID;
+
+                    // Excel-style reference tracking: update all references to old ID
+                    if (oldID !== newID) {
+                        newNodes.forEach((node, i) => {
+                            if (node.Linked_Node_ID_xA === oldID) {
+                                newNodes[i].Linked_Node_ID_xA = newID;
+                            }
+                        });
+                    }
                 }
             }
 
@@ -577,7 +846,7 @@
 
             // Save to history
             saveToHistory(newNodes);
-        }, [nodes, saveToHistory]);
+        }, [nodes, collapsedGroups, saveToHistory]);
 
         // Linking mode handlers
         const enterLinkMode = useCallback((rowIndex) => {
@@ -706,13 +975,15 @@
             }
         }, []);
 
-        // Load example
-        const loadExample = useCallback(() => {
-            const sampleNodes = window.GraphApp.data.sample;
-            setNodes(sampleNodes);
+        // Load demo by name
+        const loadDemo = useCallback((demoName) => {
+            const demos = window.GraphApp.data.demos;
+            const demoData = demos[demoName] || window.GraphApp.data.sample;
+            setNodes(demoData);
+            setShowDemoMenu(false);
 
-            // Validate example data
-            const validationErrors = window.GraphApp.utils.validateNodes(sampleNodes);
+            // Validate demo data
+            const validationErrors = window.GraphApp.utils.validateNodes(demoData);
             setErrors(validationErrors);
         }, []);
 
@@ -805,49 +1076,45 @@
                             className: "w-px h-6 bg-gray-300"
                         }),
 
-                        // Panel layout controls
-                        React.createElement('div', {
-                            key: 'panel-layout',
-                            className: "flex items-center"
+                        // Panel layout control (optimal fit only)
+                        React.createElement('button', {
+                            key: 'layout-balanced',
+                            onClick: calculateOptimalTableWidth,
+                            className: "w-8 h-8 flex items-center justify-center hover:bg-gray-100 text-gray-600",
+                            title: "Optimal fit (auto-calculate to prevent truncation)"
                         }, [
-                            React.createElement('button', {
-                                key: 'layout-canvas',
-                                onClick: () => setTablePanelWidth(20),
-                                className: `w-8 h-8 flex items-center justify-center ${tablePanelWidth <= 25 ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-600'}`,
-                                title: "Maximize canvas (20% table)"
-                            }, [
-                                React.createElement(LayoutCanvasPriority, { size: 20 })
-                            ]),
-                            React.createElement('button', {
-                                key: 'layout-balanced',
-                                onClick: () => setTablePanelWidth(33),
-                                className: `w-8 h-8 flex items-center justify-center ${tablePanelWidth > 25 && tablePanelWidth < 60 ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-600'}`,
-                                title: "Balanced layout (33% table)"
-                            }, [
-                                React.createElement(LayoutBalanced, { size: 20 })
-                            ]),
-                            React.createElement('button', {
-                                key: 'layout-table',
-                                onClick: () => setTablePanelWidth(80),
-                                className: `w-8 h-8 flex items-center justify-center ${tablePanelWidth >= 60 ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-600'}`,
-                                title: "Maximize table (80% table)"
-                            }, [
-                                React.createElement(LayoutTablePriority, { size: 20 })
-                            ])
+                            React.createElement(LayoutBalanced, { size: 20 })
                         ]),
 
-                        // Example button (only when no data)
-                        ...(nodes.length === 0 ? [
-                            React.createElement('div', {
-                                key: 'div2',
-                                className: "w-px h-6 bg-gray-300"
-                            }),
+                        // Demos dropdown
+                        React.createElement('div', {
+                            key: 'div2',
+                            className: "w-px h-6 bg-gray-300"
+                        }),
+                        React.createElement('div', {
+                            key: 'demos-dropdown',
+                            className: "relative",
+                            'data-demos-dropdown': true
+                        }, [
                             React.createElement('button', {
-                                key: 'example',
-                                onClick: loadExample,
-                                className: "flex items-center px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600"
-                            }, "Load Example")
-                        ] : []),
+                                key: 'demos-btn',
+                                onClick: () => setShowDemoMenu(!showDemoMenu),
+                                className: "flex items-center gap-1 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                            }, [
+                                "Demos",
+                                React.createElement('span', { key: 'arrow', className: "text-[10px]" }, showDemoMenu ? "▲" : "▼")
+                            ]),
+                            showDemoMenu && React.createElement('div', {
+                                key: 'demos-menu',
+                                className: "absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 min-w-[140px]"
+                            }, Object.keys(window.GraphApp.data.demos).map(demoName =>
+                                React.createElement('button', {
+                                    key: demoName,
+                                    onClick: () => loadDemo(demoName),
+                                    className: "block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 first:rounded-t last:rounded-b"
+                                }, demoName)
+                            ))
+                        ]),
 
                         React.createElement('div', {
                             key: 'div3',
@@ -1046,12 +1313,12 @@
                             className: "text-center text-gray-500"
                         }, [
                             React.createElement('p', { key: 'p', className: "mb-4" },
-                                "No data loaded. Import a file or load example to get started."),
+                                "No data loaded. Import a file or try a demo to get started."),
                             React.createElement('button', {
                                 key: 'btn',
-                                onClick: loadExample,
+                                onClick: () => loadDemo('Quick Tour'),
                                 className: "px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                            }, "Load Example")
+                            }, "Load Quick Tour")
                         ])
                     ]) :
                     // Data table
@@ -1059,11 +1326,48 @@
                         key: 'table',
                         className: "w-full text-sm"
                     }, [
+                        // Column widths
+                        React.createElement('colgroup', { key: 'colgroup' }, [
+                            React.createElement('col', { key: 'col-rownum', style: { width: '40px' } }), // Row number (3 digits max)
+                            React.createElement('col', { key: 'col-collapse', style: { width: '32px' } }), // Collapse icon
+                            React.createElement('col', { key: 'col-visibility', style: { width: '32px' } }), // Visibility icon
+                            React.createElement('col', {
+                                key: 'col-group',
+                                style: { width: `${colWidths.Group_xA}px` }
+                            }),
+                            React.createElement('col', {
+                                key: 'col-node',
+                                style: { width: `${colWidths.Node_xA}px` }
+                            }),
+                            React.createElement('col', { key: 'col-links', style: { width: '36px' } }), // Incoming links count (2 digits max)
+                            ...(showIDColumn ? [
+                                React.createElement('col', {
+                                    key: 'col-id',
+                                    style: { width: `${colWidths.ID_xA}px` }
+                                })
+                            ] : []),
+                            React.createElement('col', {
+                                key: 'col-linked',
+                                style: { width: `${colWidths.Linked_Node_ID_xA}px` }
+                            }),
+                            React.createElement('col', {
+                                key: 'col-label',
+                                style: { width: `${colWidths.Link_Label_xB}px` }
+                            }),
+                            React.createElement('col', { key: 'col-duplicate', style: { width: '32px' } }), // Duplicate icon
+                            React.createElement('col', { key: 'col-actions', style: { width: '32px' } }) // Delete icon
+                        ]),
                         React.createElement('thead', {
                             key: 'thead',
                             className: "sticky top-0 bg-gray-100 border-b-2 border-gray-300 z-10"
                         }, [
                             React.createElement('tr', { key: 'tr' }, [
+                                React.createElement('th', {
+                                    key: 'rownum',
+                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-500",
+                                    style: { width: '30px' },
+                                    title: "Row number (for reference)"
+                                }, "#"),
                                 React.createElement('th', {
                                     key: 'collapse',
                                     className: "px-2 py-2 text-xs font-semibold text-center cursor-pointer hover:bg-gray-100",
@@ -1093,7 +1397,7 @@
                                 React.createElement('th', {
                                     key: 'group',
                                     onClick: () => handleSort('Group_xA'),
-                                    className: "px-2 py-2 text-xs font-semibold text-left sortable-header"
+                                    className: "px-1 py-2 text-xs font-semibold text-left sortable-header"
                                 }, [
                                     'Group ',
                                     sortColumn === 'Group_xA' && (sortDirection === 'asc' ? '▲' : '▼')
@@ -1101,29 +1405,29 @@
                                 React.createElement('th', {
                                     key: 'node',
                                     onClick: () => handleSort('Node_xA'),
-                                    className: "px-2 py-2 text-xs font-semibold text-left sortable-header"
+                                    className: "px-1 py-2 text-xs font-semibold text-left sortable-header"
                                 }, [
                                     'Node ',
                                     sortColumn === 'Node_xA' && (sortDirection === 'asc' ? '▲' : '▼')
                                 ]),
                                 React.createElement('th', {
                                     key: 'links',
-                                    className: "px-2 py-2 text-xs font-semibold text-center",
+                                    className: "px-1 py-2 text-xs font-semibold text-center",
                                     title: "Number of incoming links to this node"
                                 }, "→"),
                                 ...(showIDColumn ? [
                                     React.createElement('th', {
                                         key: 'id',
-                                        className: "px-2 py-2 text-xs font-semibold text-left"
+                                        className: "px-1 py-2 text-xs font-semibold text-left"
                                     }, "ID")
                                 ] : []),
                                 React.createElement('th', {
                                     key: 'linked',
-                                    className: "px-2 py-2 text-xs font-semibold text-left"
+                                    className: "px-1 py-2 text-xs font-semibold text-left"
                                 }, "Linked To"),
                                 React.createElement('th', {
                                     key: 'label',
-                                    className: "px-2 py-2 text-xs font-semibold text-left"
+                                    className: "px-1 py-2 text-xs font-semibold text-left"
                                 }, "Label"),
                                 React.createElement('th', {
                                     key: 'duplicate',
@@ -1151,15 +1455,20 @@
 
                                 return React.createElement('tr', {
                                     key: index,
-                                    className: `border-b border-gray-200 hover:bg-gray-50 ${hasError ? 'bg-red-100 border-l-4 border-l-red-500' : ''}`,
+                                    className: `border-b border-gray-200 ${hasError ? 'bg-red-100 hover:bg-red-200 border-l-4 border-l-red-500' : 'hover:bg-gray-50'}`,
                                     title: hasError ? errorRowMap[index].join('; ') : ''
                                 }, [
+                                    React.createElement('td', {
+                                        key: 'rownum',
+                                        className: "px-1 py-1 text-xs text-center text-gray-400",
+                                        style: { width: '30px' }
+                                    }, filteredIndex + 1),
                                     React.createElement('td', {
                                         key: 'collapse',
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
                                         onClick: () => toggleGroupCollapse(node.Group_xA),
-                                        className: "p-1 rounded hover:bg-gray-100 text-gray-600",
+                                        className: `p-1 rounded hover:bg-gray-100 ${isCollapsed ? 'text-gray-900 font-bold' : 'text-gray-600'}`,
                                         title: collapsedGroups.has(node.Group_xA) ? `Expand group "${node.Group_xA}"` : `Collapse group "${node.Group_xA}"`
                                     }, React.createElement(collapsedGroups.has(node.Group_xA) ? ChevronRight : ChevronDown, { size: 14 }))),
                                     React.createElement('td', {
@@ -1172,56 +1481,54 @@
                                     }, React.createElement(hiddenGroups.has(node.Group_xA) ? EyeOff : Eye, { size: 14 }))),
                                     React.createElement('td', {
                                         key: 'group',
-                                        className: "px-2 py-1"
+                                        className: "px-1 py-1"
                                     }, React.createElement('input', {
                                         type: 'text',
                                         value: node.Group_xA,
                                         onChange: (e) => handleCellEdit(index, 'Group_xA', e.target.value),
-                                        title: node.Group_xA,
-                                        className: "w-full px-1 py-0.5 text-xs border border-gray-300 rounded table-input"
+                                        title: isCollapsed ? `Editing this will rename all nodes in group "${node.Group_xA}"` : node.Group_xA,
+                                        className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : 'border-gray-300'}`
                                     })),
                                     React.createElement('td', {
                                         key: 'node',
-                                        className: `px-2 py-1 ${linkingMode.active && !isCollapsed ? 'cursor-pointer hover:bg-blue-50 ring-2 ring-transparent hover:ring-blue-200' : ''} ${isCollapsed ? 'bg-gray-50' : ''}`,
+                                        className: `px-1 py-1 ${linkingMode.active && !isCollapsed ? 'cursor-pointer hover:bg-blue-50 ring-2 ring-transparent hover:ring-blue-200' : ''}`,
                                         onClick: () => linkingMode.active && !isCollapsed && handleIDClick(index),
                                         title: linkingMode.active ? (isCollapsed ? 'Expand group to link' : 'Click to link') : (isCollapsed ? 'Collapsed group' : '')
-                                    }, React.createElement('input', {
+                                    }, isCollapsed ? null : React.createElement('input', {
                                         type: 'text',
-                                        value: isCollapsed ? '' : node.Node_xA,
+                                        value: node.Node_xA,
                                         onChange: (e) => handleCellEdit(index, 'Node_xA', e.target.value),
-                                        title: isCollapsed ? 'Collapsed group' : node.Node_xA,
-                                        className: `w-full px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 text-blue-700 font-semibold' : ''} ${isCollapsed ? 'bg-gray-50' : ''}`,
-                                        readOnly: linkingMode.active || isCollapsed,
-                                        placeholder: isCollapsed ? '(collapsed)' : ''
+                                        title: node.Node_xA,
+                                        className: `px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 text-blue-700 font-semibold' : ''}`,
+                                        readOnly: linkingMode.active
                                     })),
                                     React.createElement('td', {
                                         key: 'links',
-                                        className: `px-2 py-1 text-center text-xs font-semibold ${(incomingLinksCount[node.ID_xA] || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`,
-                                        title: `${incomingLinksCount[node.ID_xA] || 0} node(s) link to this`
-                                    }, incomingLinksCount[node.ID_xA] || 0),
+                                        className: `px-2 py-1 text-center text-xs font-semibold ${!isCollapsed && (incomingLinksCount[node.ID_xA] || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`,
+                                        title: isCollapsed ? '' : `${incomingLinksCount[node.ID_xA] || 0} node(s) link to this`
+                                    }, isCollapsed ? null : (incomingLinksCount[node.ID_xA] || 0)),
                                     ...(showIDColumn ? [
                                         React.createElement('td', {
                                             key: 'id',
-                                            className: `px-2 py-1 text-xs ${linkingMode.active && !isCollapsed ? 'cursor-pointer text-blue-600 hover:bg-blue-50 font-semibold' : isCollapsed ? 'text-gray-400' : 'text-gray-600'}`,
+                                            className: `px-1 py-1 text-xs ${!isCollapsed && linkingMode.active ? 'cursor-pointer text-blue-600 hover:bg-blue-50 font-semibold' : 'text-gray-600'}`,
                                             onClick: () => !isCollapsed && handleIDClick(index),
-                                            title: linkingMode.active ? (isCollapsed ? 'Expand group to link' : 'Click to link') : ''
-                                        }, node.ID_xA)
+                                            title: linkingMode.active && !isCollapsed ? 'Click to link' : ''
+                                        }, isCollapsed ? null : node.ID_xA)
                                     ] : []),
                                     React.createElement('td', {
                                         key: 'linked',
-                                        className: "px-2 py-1"
-                                    }, React.createElement('div', {
-                                        className: `flex items-center gap-1 ${linkingMode.active && linkingMode.targetRowIndex === index ? 'ring-2 ring-blue-500 rounded' : ''} ${isCollapsed ? 'bg-gray-50' : ''}`
+                                        className: "px-1 py-1"
+                                    }, isCollapsed ? null : React.createElement('div', {
+                                        className: `flex items-center gap-1 w-full ${linkingMode.active && linkingMode.targetRowIndex === index ? 'ring-2 ring-blue-500 rounded' : ''}`
                                     }, [
                                         React.createElement('input', {
                                             key: 'input',
                                             type: 'text',
-                                            value: isCollapsed ? '' : node.Linked_Node_ID_xA,
+                                            value: node.Linked_Node_ID_xA,
                                             onChange: (e) => handleCellEdit(index, 'Linked_Node_ID_xA', e.target.value),
-                                            title: isCollapsed ? 'Collapsed group' : node.Linked_Node_ID_xA,
-                                            className: `flex-1 px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${isCollapsed ? 'bg-gray-50' : ''}`,
-                                            disabled: (linkingMode.active && linkingMode.targetRowIndex === index) || isCollapsed,
-                                            readOnly: isCollapsed
+                                            title: node.Linked_Node_ID_xA,
+                                            className: "flex-1 px-1 py-0.5 text-xs border border-gray-300 rounded table-input",
+                                            disabled: linkingMode.active && linkingMode.targetRowIndex === index
                                         }),
                                         // Clear button - shows when there's a value and not in linking mode
                                         ...(node.Linked_Node_ID_xA && !(linkingMode.active && linkingMode.targetRowIndex === index) ? [
@@ -1249,33 +1556,38 @@
                                     ])),
                                     React.createElement('td', {
                                         key: 'label',
-                                        className: `px-2 py-1 ${isCollapsed ? 'bg-gray-50' : ''}`
-                                    }, React.createElement('input', {
+                                        className: "px-1 py-1"
+                                    }, isCollapsed ? null : React.createElement('input', {
                                         type: 'text',
-                                        value: isCollapsed ? '' : (node.Link_Label_xB || ''),
+                                        value: node.Link_Label_xB || '',
                                         onChange: (e) => handleCellEdit(index, 'Link_Label_xB', e.target.value),
-                                        title: isCollapsed ? 'Collapsed group' : (node.Link_Label_xB || ''),
-                                        className: `w-full px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${isCollapsed ? 'bg-gray-50' : ''}`,
-                                        readOnly: isCollapsed
+                                        title: node.Link_Label_xB || '',
+                                        className: "px-1 py-0.5 text-xs border border-gray-300 rounded table-input"
                                     })),
                                     React.createElement('td', {
                                         key: 'duplicate',
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
-                                        onClick: () => handleDuplicateRow(index),
-                                        className: "p-1 text-blue-500 hover:bg-blue-50 rounded",
-                                        title: "Duplicate this row"
+                                        onClick: () => isCollapsed ? handleDuplicateGroup(node.Group_xA) : handleDuplicateRow(index),
+                                        className: `p-1 rounded text-blue-500 hover:bg-blue-50`,
+                                        title: isCollapsed ? "Duplicate entire group" : "Duplicate this row"
                                     }, React.createElement(Copy, { size: 14 }))),
                                     React.createElement('td', {
                                         key: 'actions',
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
-                                        onClick: () => handleDeleteNode(index),
-                                        className: "p-1 text-black hover:bg-red-50 rounded flex items-center gap-0.5"
+                                        onClick: () => isCollapsed ? handleDeleteGroup(node.Group_xA) : handleDeleteNode(index),
+                                        className: "p-1 rounded flex items-center gap-0.5 text-black hover:bg-red-50",
+                                        title: isCollapsed
+                                            ? (groupsWithExternalRefs.has(node.Group_xA)
+                                                ? "Delete entire group (has external references)"
+                                                : "Delete entire group")
+                                            : "Delete this row"
                                     }, [
                                         React.createElement(Trash2, { key: 'icon', size: 14 }),
-                                        // Show "*" for referenced nodes
-                                        ...(incomingLinksCount[node.ID_xA] > 0 ? [
+                                        // Show "*" for referenced nodes or collapsed groups with external refs
+                                        ...((isCollapsed && groupsWithExternalRefs.has(node.Group_xA)) ||
+                                            (!isCollapsed && incomingLinksCount[node.ID_xA] > 0) ? [
                                             React.createElement('span', {
                                                 key: 'ref',
                                                 className: "text-xs font-bold"

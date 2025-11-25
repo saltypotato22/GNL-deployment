@@ -78,10 +78,7 @@
             }
         });
 
-        // Check for cycles (as warning, not error - cycles are valid in some graphs)
-        if (hasCycleInternal(nodes)) {
-            warnings.push('Warning: Graph contains circular references');
-        }
+        // Note: Cycles are valid in network/wiring diagrams, so no warning shown
 
         // Return errors first, then warnings
         return [...errors, ...warnings];
@@ -181,6 +178,40 @@
     };
 
     /**
+     * Generate unique group name with _N suffix
+     * @param {String} baseName - Base group name to duplicate
+     * @param {Array} nodes - Array of node objects
+     * @returns {String} Unique group name with suffix
+     */
+    const generateUniqueGroupName = function(baseName, nodes) {
+        // Extract existing group names
+        const existingGroups = new Set(nodes.map(n => n.Group_xA));
+
+        // Pattern to match baseName_N format
+        const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`^${escapedBase}_(\\d+)$`);
+
+        let maxSuffix = 0;
+
+        // Check if base name itself exists (without suffix)
+        if (existingGroups.has(baseName)) {
+            maxSuffix = 1;
+        }
+
+        // Find highest suffix number
+        existingGroups.forEach(groupName => {
+            const match = groupName.match(pattern);
+            if (match) {
+                const suffix = parseInt(match[1]);
+                maxSuffix = Math.max(maxSuffix, suffix);
+            }
+        });
+
+        // Return next available suffix
+        return `${baseName}_${maxSuffix + 1}`;
+    };
+
+    /**
      * Parse Mermaid file content to node data
      * @param {String} mermaidContent - Mermaid .mmd file content
      * @returns {Array} Array of node objects
@@ -260,13 +291,103 @@
         return nodes;
     };
 
+    /**
+     * Measure text width in pixels using canvas
+     * @param {String} text - Text to measure
+     * @param {String} font - CSS font string (default: table font)
+     * @returns {Number} Width in pixels
+     */
+    const measureTextPx = (function() {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        return function(text, font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif') {
+            ctx.font = font;
+            return ctx.measureText(text || '').width;
+        };
+    })();
+
+    /**
+     * Compute optimal column widths based on content
+     * @param {Array} rows - Array of node objects
+     * @param {Boolean} showIDColumn - Whether ID column is visible
+     * @returns {Object} Column widths: { Group_xA: px, Node_xA: px, ID_xA: px, Linked_Node_ID_xA: px, Link_Label_xB: px }
+     */
+    const computeColumnWidths = function(rows, showIDColumn) {
+        // Character-based sizing limits
+        const MIN_CHARS_REGULAR = 3;   // Group, Node, Label minimum
+        const MAX_CHARS_REGULAR = 30;  // Group, Node, Label maximum
+        const MIN_CHARS_LINKED = 6;    // Linked To minimum (format: "Group-Node")
+        const MAX_CHARS_LINKED = 42;   // Linked To maximum
+
+        // Convert characters to pixels (average ~7px per char in 12px font)
+        const AVG_CHAR_WIDTH = 7;
+        const MIN_WIDTH_REGULAR = MIN_CHARS_REGULAR * AVG_CHAR_WIDTH;  // 21px
+        const MAX_WIDTH_REGULAR = MAX_CHARS_REGULAR * AVG_CHAR_WIDTH;  // 210px
+        const MIN_WIDTH_LINKED = MIN_CHARS_LINKED * AVG_CHAR_WIDTH;    // 42px
+        const MAX_WIDTH_LINKED = MAX_CHARS_LINKED * AVG_CHAR_WIDTH;    // 294px
+
+        const PADDING = 20; // Input padding + cell padding + buffer
+        const BORDER = 2; // 1px left + 1px right
+        const BUTTON_CLUSTER = 40; // Space for clear/link buttons (36px) + small gap in Linked To column
+
+        // Headers to measure
+        const headers = {
+            Group_xA: 'Group',
+            Node_xA: 'Node',
+            ID_xA: 'ID',
+            Linked_Node_ID_xA: 'Linked To',
+            Link_Label_xB: 'Label'
+        };
+
+        const widths = {};
+
+        // Compute width for each column
+        ['Group_xA', 'Node_xA', 'ID_xA', 'Linked_Node_ID_xA', 'Link_Label_xB'].forEach(column => {
+            // Skip ID column if not shown
+            if (column === 'ID_xA' && !showIDColumn) {
+                widths[column] = 0;
+                return;
+            }
+
+            let maxTextWidth = measureTextPx(headers[column]);
+
+            // Find longest text in this column
+            rows.forEach(row => {
+                const text = String(row[column] || '');
+                const textWidth = measureTextPx(text);
+                maxTextWidth = Math.max(maxTextWidth, textWidth);
+            });
+
+            // Add padding, borders, and extra space for buttons (Linked To column)
+            let columnWidth = maxTextWidth + PADDING + BORDER;
+            if (column === 'Linked_Node_ID_xA') {
+                columnWidth += BUTTON_CLUSTER;
+            }
+
+            // Clamp to min/max (different limits for Linked To vs regular columns)
+            if (column === 'Linked_Node_ID_xA') {
+                columnWidth = Math.max(MIN_WIDTH_LINKED, Math.min(MAX_WIDTH_LINKED, columnWidth));
+            } else {
+                columnWidth = Math.max(MIN_WIDTH_REGULAR, Math.min(MAX_WIDTH_REGULAR, columnWidth));
+            }
+
+            widths[column] = Math.round(columnWidth);
+        });
+
+        return widths;
+    };
+
     // Expose utilities to global namespace
     window.GraphApp.utils = {
         validateNodes,
         sortNodes,
         generateID,
+        generateUniqueGroupName,
         hasCycle,
-        parseMermaidToNodes
+        parseMermaidToNodes,
+        measureTextPx,
+        computeColumnWidths
     };
 
 })(window);
