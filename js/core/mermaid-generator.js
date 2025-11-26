@@ -29,9 +29,10 @@
      * @param {Object} settings - Diagram settings { direction: 'TB'|'LR'|'RL'|'BT', curve: 'basis'|'linear'|'step', ... }
      * @param {Set} hiddenGroups - Set of group names to hide (optional)
      * @param {Boolean} hideUnlinkedNodes - Hide nodes with no links (optional)
+     * @param {Boolean} hideLinkedNodes - Hide nodes that have links (optional)
      * @returns {String} Mermaid diagram syntax
      */
-    const generateMermaid = function(nodes, settings, hiddenGroups, hideUnlinkedNodes) {
+    const generateMermaid = function(nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes) {
         const direction = settings.direction || 'TB';
         const curve = settings.curve || 'basis';
 
@@ -45,9 +46,9 @@
         // Default to empty set if not provided
         const hidden = hiddenGroups || new Set();
 
-        // Build sets of linked node IDs if hiding unlinked nodes
+        // Build sets of linked node IDs if filtering by link status
         let linkedNodeIDs = new Set();
-        if (hideUnlinkedNodes) {
+        if (hideUnlinkedNodes || hideLinkedNodes) {
             nodes.forEach(node => {
                 // Node has outgoing link
                 if (node.Linked_Node_ID_xA && !node.Hidden_Link_xB) {
@@ -70,15 +71,21 @@
             // Skip unlinked nodes if hideUnlinkedNodes is true
             if (hideUnlinkedNodes && !linkedNodeIDs.has(node.ID_xA)) return;
 
+            // Skip linked nodes if hideLinkedNodes is true
+            if (hideLinkedNodes && linkedNodeIDs.has(node.ID_xA)) return;
+
             if (!groups[groupName]) {
                 groups[groupName] = [];
             }
             groups[groupName].push(node);
         });
 
-        // Generate subgraphs for each group
+        // Generate subgraphs for each group (skip empty groups)
         Object.keys(groups).forEach((groupName, groupIndex) => {
             const groupNodes = groups[groupName];
+
+            // Skip empty groups (all nodes filtered out)
+            if (!groupNodes || groupNodes.length === 0) return;
 
             // Create subgraph
             mermaid += `\n    subgraph ${sanitizeID(groupName)}["${sanitizeLabel(groupName)}"]\n`;
@@ -97,7 +104,12 @@
         mermaid += `\n`;
 
         const visibleNodes = nodes.filter(n => {
-            return n.Hidden_Node_xB != 1 && !hidden.has(n.Group_xA);
+            if (n.Hidden_Node_xB == 1) return false;
+            if (hidden.has(n.Group_xA)) return false;
+            // Apply linked/unlinked filtering
+            if (hideUnlinkedNodes && !linkedNodeIDs.has(n.ID_xA)) return false;
+            if (hideLinkedNodes && linkedNodeIDs.has(n.ID_xA)) return false;
+            return true;
         });
         const visibleNodeIDs = new Set(visibleNodes.map(n => n.ID_xA));
 

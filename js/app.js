@@ -17,7 +17,8 @@
         const [nodes, setNodes] = useState(() => window.GraphApp.data.sample || []);
         const [errors, setErrors] = useState([]);
         const [settings, setSettings] = useState({
-            direction: 'TB', // TB, BT, LR, or RL
+            direction: 'TB', // TB, BT, LR, or RL (used by compact layout)
+            layout: 'fcose', // fcose (smart), compact-TB, compact-LR
             zoom: 100,
             showTooltips: true,
             curve: 'basis' // basis (curved), linear (straight), or step (orthogonal)
@@ -32,6 +33,8 @@
         const [hiddenGroups, setHiddenGroups] = useState(new Set());
         const [collapsedGroups, setCollapsedGroups] = useState(new Set());
         const [hideUnlinkedNodes, setHideUnlinkedNodes] = useState(false);
+        const [hideLinkedNodes, setHideLinkedNodes] = useState(false);
+        const [hideLinks, setHideLinks] = useState(false);
         const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
         const [isPanning, setIsPanning] = useState(false);
         const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -42,6 +45,7 @@
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
         const [showDemoMenu, setShowDemoMenu] = useState(false);
+        const [currentFileName, setCurrentFileName] = useState('');
         const [colWidths, setColWidths] = useState({
             Group_xA: 60,
             Node_xA: 60,
@@ -96,6 +100,26 @@
             return () => document.removeEventListener('click', handleClick);
         }, [showDemoMenu]);
 
+        // PERFORMANCE: O(1) lookup map for node IDs - used by multiple computations
+        const nodeIdMap = useMemo(() => {
+            const map = new Map();
+            nodes.forEach((node, index) => {
+                if (node.ID_xA) map.set(node.ID_xA, index);
+            });
+            return map;
+        }, [nodes]);
+
+        // PERFORMANCE: Pre-compute first index of each group for table filtering
+        const groupFirstIndex = useMemo(() => {
+            const map = new Map();
+            nodes.forEach((node, index) => {
+                if (!map.has(node.Group_xA)) {
+                    map.set(node.Group_xA, index);
+                }
+            });
+            return map;
+        }, [nodes]);
+
         // Calculate incoming links count for each node
         const incomingLinksCount = useMemo(() => {
             const counts = {};
@@ -108,23 +132,25 @@
             return counts;
         }, [nodes]);
 
-        // Calculate which groups have external references (nodes referenced from outside the group)
+        // Calculate which groups have external references - O(n) with nodeIdMap
         const groupsWithExternalRefs = useMemo(() => {
             const groups = new Set();
             nodes.forEach(sourceNode => {
                 if (sourceNode.Linked_Node_ID_xA && !sourceNode.Hidden_Link_xB) {
-                    // Find the target node
-                    const targetNode = nodes.find(n => n.ID_xA === sourceNode.Linked_Node_ID_xA);
-                    // If target exists and is in a DIFFERENT group, that group has external refs
-                    if (targetNode && targetNode.Group_xA !== sourceNode.Group_xA) {
-                        groups.add(targetNode.Group_xA);
+                    // O(1) lookup instead of O(n) find()
+                    const targetIndex = nodeIdMap.get(sourceNode.Linked_Node_ID_xA);
+                    if (targetIndex !== undefined) {
+                        const targetNode = nodes[targetIndex];
+                        if (targetNode.Group_xA !== sourceNode.Group_xA) {
+                            groups.add(targetNode.Group_xA);
+                        }
                     }
                 }
             });
             return groups;
-        }, [nodes]);
+        }, [nodes, nodeIdMap]);
 
-        // Map errors to row indices for highlighting
+        // Map errors to row indices for highlighting - O(n) with nodeIdMap
         const errorRowMap = useMemo(() => {
             const map = {};
 
@@ -137,15 +163,24 @@
                     map[rowIndex].push(errorMsg);
                 }
 
-                // Handle "Duplicate ID: ..." errors - find all rows with this ID
+                // Handle "Duplicate ID: ..." errors - O(1) lookup instead of O(n) loop
                 const dupMatch = errorMsg.match(/Duplicate ID: (.+)/);
                 if (dupMatch) {
                     const dupID = dupMatch[1];
-                    nodes.forEach((node, idx) => {
-                        if (node.ID_xA === dupID) {
-                            if (!map[idx]) map[idx] = [];
-                            if (!map[idx].includes(errorMsg)) {
-                                map[idx].push(errorMsg);
+                    // Use nodeIdMap for O(1) lookup of first occurrence
+                    const idx = nodeIdMap.get(dupID);
+                    if (idx !== undefined) {
+                        if (!map[idx]) map[idx] = [];
+                        if (!map[idx].includes(errorMsg)) {
+                            map[idx].push(errorMsg);
+                        }
+                    }
+                    // Also find duplicates by scanning once (they share the same ID)
+                    nodes.forEach((node, nodeIdx) => {
+                        if (node.ID_xA === dupID && nodeIdx !== idx) {
+                            if (!map[nodeIdx]) map[nodeIdx] = [];
+                            if (!map[nodeIdx].includes(errorMsg)) {
+                                map[nodeIdx].push(errorMsg);
                             }
                         }
                     });
@@ -153,7 +188,7 @@
             });
 
             return map;
-        }, [errors, nodes]);
+        }, [errors, nodes, nodeIdMap]);
 
         // Load sample data on mount
         useEffect(() => {
@@ -269,114 +304,55 @@
 
         // Fit diagram to screen with optimal zoom and centering
         const fitDiagramToScreen = useCallback(() => {
-            const container = document.getElementById('mermaid-container');
-            if (!container) return;
+            // Use Cytoscape's native fit method
+            window.GraphApp.core.fitCytoscapeToScreen(40);
 
-            const svg = container.querySelector('svg');
-            if (!svg) return;
+            // Update zoom state to reflect actual Cytoscape zoom
+            const currentZoom = window.GraphApp.core.getCytoscapeZoom();
+            setSettings(prev => ({ ...prev, zoom: currentZoom }));
+            setPanOffset({ x: 0, y: 0 });
+        }, []);
 
-            try {
-                // Get SVG's true content size from viewBox (never changes)
-                const viewBox = svg.getAttribute('viewBox');
-                let svgWidth, svgHeight;
-
-                if (viewBox) {
-                    const parts = viewBox.split(' ');
-                    svgWidth = parseFloat(parts[2]);
-                    svgHeight = parseFloat(parts[3]);
-                } else {
-                    // Fallback to attributes
-                    svgWidth = parseFloat(svg.getAttribute('width')) || 800;
-                    svgHeight = parseFloat(svg.getAttribute('height')) || 600;
-                }
-
-                // Reset transform before applying new one
-                svg.style.transform = 'none';
-
-                // Get container size
-                const containerWidth = container.clientWidth;
-                const containerHeight = container.clientHeight;
-
-                // Leave 10% margin for breathing room
-                const margin = 0.9;
-                const availableWidth = containerWidth * margin;
-                const availableHeight = containerHeight * margin;
-
-                // Calculate zoom to fit
-                const scaleX = availableWidth / svgWidth;
-                const scaleY = availableHeight / svgHeight;
-                const scale = Math.min(scaleX, scaleY);
-
-                // Round to nearest 5% for clean values
-                let fitZoom = Math.round(scale * 100 / 5) * 5;
-                fitZoom = Math.max(10, Math.min(500, fitZoom));
-
-                // Calculate pan to center (simple with top-left positioning)
-                const finalScale = fitZoom / 100;
-                const scaledWidth = svgWidth * finalScale;
-                const scaledHeight = svgHeight * finalScale;
-
-                const panX = (containerWidth - scaledWidth) / 2;
-                const panY = (containerHeight - scaledHeight) / 2;
-
-                // Apply
-                setSettings({ ...settings, zoom: fitZoom });
-                setPanOffset({ x: panX, y: panY });
-                applyTransform(fitZoom, panX, panY);
-            } catch (error) {
-                console.error('Fit to screen failed:', error);
-            }
-        }, [settings, applyTransform]);
-
-        // Render Mermaid diagram
+        // Render diagram using Cytoscape
         const renderDiagram = useCallback(async () => {
             setIsRendering(true);
 
-            // Detect if direction or hide-unlinked changed (requires fit to screen)
-            const directionChanged = settings.direction !== prevDirection;
+            // Detect if hide-unlinked changed (requires fit to screen)
             const hideUnlinkedChanged = hideUnlinkedNodes !== prevHideUnlinked;
             const isFirstRender = isFirstRenderRef.current;
-            const needsFitToScreen = directionChanged || hideUnlinkedChanged || isFirstRender;
+            const needsFitToScreen = hideUnlinkedChanged || isFirstRender;
 
             // Clear first render flag
             if (isFirstRender) {
                 isFirstRenderRef.current = false;
             }
 
-            try{
-                const mermaidSyntax = window.GraphApp.core.generateMermaid(nodes, settings, hiddenGroups, hideUnlinkedNodes);
-                await window.GraphApp.core.renderMermaid(mermaidSyntax, 'mermaid-container');
+            try {
+                // Render using Cytoscape (incremental layout - existing nodes keep positions)
+                window.GraphApp.core.renderCytoscape(
+                    nodes,
+                    settings,
+                    hiddenGroups,
+                    hideUnlinkedNodes,
+                    hideLinkedNodes,
+                    hideLinks,
+                    'mermaid-container'
+                );
 
-                // Update tracking state immediately (before timeout)
-                if (directionChanged) {
-                    setPrevDirection(settings.direction);
-                }
+                // Update tracking state
                 if (hideUnlinkedChanged) {
                     setPrevHideUnlinked(hideUnlinkedNodes);
                 }
 
-                // Single timeout to avoid race condition between cluster positioning and zoom
-                setTimeout(() => {
-                    // Position cluster labels at top-left corner
-                    const clusters = document.querySelectorAll('#mermaid-container .cluster');
-                    clusters.forEach(cluster => {
-                        const rect = cluster.querySelector('rect');
-                        const label = cluster.querySelector('.cluster-label');
-                        if (rect && label) {
-                            const rectBox = rect.getBBox();
-                            const newX = rectBox.x + 10;
-                            const newY = rectBox.y;
-                            label.setAttribute('transform', `translate(${newX}, ${newY})`);
-                        }
-                    });
-
-                    // After positioning, handle zoom/pan
-                    if (needsFitToScreen) {
-                        fitDiagramToScreen();
-                    } else {
-                        applyTransform(zoomRef.current, panOffsetRef.current.x, panOffsetRef.current.y);
-                    }
-                }, 100);
+                // Fit to screen on first render or major changes
+                if (needsFitToScreen) {
+                    setTimeout(() => {
+                        window.GraphApp.core.fitCytoscapeToScreen(40);
+                        // Sync zoom state with actual Cytoscape zoom
+                        const currentZoom = window.GraphApp.core.getCytoscapeZoom();
+                        setSettings(prev => ({ ...prev, zoom: currentZoom }));
+                    }, 350); // After layout animation completes
+                }
 
                 setIsRendering(false);
             } catch (error) {
@@ -384,68 +360,71 @@
                 setErrors(prev => [...prev, 'Failed to render diagram: ' + error.message]);
                 setIsRendering(false);
             }
-        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, applyTransform, fitDiagramToScreen, prevDirection, prevHideUnlinked]);
+        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, prevHideUnlinked]);
 
-        // Render diagram when nodes or settings change
+        // PERFORMANCE: Debounce diagram rendering (300ms) - table stays responsive
         useEffect(() => {
             if (nodes.length > 0) {
-                renderDiagram();
+                const timeoutId = setTimeout(() => {
+                    renderDiagram();
+                }, 300);
+                return () => clearTimeout(timeoutId);
             }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [nodes, settings.direction, settings.curve, hiddenGroups, hideUnlinkedNodes]);
+        }, [nodes, settings.direction, settings.curve, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks]);
 
-        // Zoom controls
+        // Zoom controls - use Cytoscape's built-in zoom
         const handleZoomIn = useCallback(() => {
-            const newZoom = Math.min(settings.zoom + 25, 500);
-            setSettings({ ...settings, zoom: newZoom });
-            applyTransform(newZoom, panOffset.x, panOffset.y);
-        }, [settings, applyTransform, panOffset]);
+            const cy = window.GraphApp.core.getCytoscapeInstance();
+            if (cy) {
+                const currentZoom = cy.zoom();
+                const newZoom = Math.min(currentZoom * 1.25, 5);
+                cy.zoom(newZoom);
+                setSettings(prev => ({ ...prev, zoom: Math.round(newZoom * 100) }));
+            }
+        }, []);
 
         const handleZoomOut = useCallback(() => {
-            const newZoom = Math.max(settings.zoom - 25, 10);
-            setSettings({ ...settings, zoom: newZoom });
-            applyTransform(newZoom, panOffset.x, panOffset.y);
-        }, [settings, applyTransform, panOffset]);
+            const cy = window.GraphApp.core.getCytoscapeInstance();
+            if (cy) {
+                const currentZoom = cy.zoom();
+                const newZoom = Math.max(currentZoom * 0.8, 0.1);
+                cy.zoom(newZoom);
+                setSettings(prev => ({ ...prev, zoom: Math.round(newZoom * 100) }));
+            }
+        }, []);
 
         const handleResetZoom = useCallback(() => {
-            setSettings({ ...settings, zoom: 100 });
+            window.GraphApp.core.fitCytoscapeToScreen(40);
+            // Sync zoom state with actual Cytoscape zoom
+            const currentZoom = window.GraphApp.core.getCytoscapeZoom();
+            setSettings(prev => ({ ...prev, zoom: currentZoom }));
             setPanOffset({ x: 0, y: 0 });
-            applyTransform(100, 0, 0);
-        }, [settings, applyTransform]);
+        }, []);
 
-        // Mouse wheel zoom
+        // Mouse wheel zoom is handled by Cytoscape natively
         const handleWheel = useCallback((e) => {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? -25 : 25;
-            const newZoom = Math.max(10, Math.min(500, settings.zoom + delta));
-            setSettings({ ...settings, zoom: newZoom });
-            applyTransform(newZoom, panOffset.x, panOffset.y);
-        }, [settings, applyTransform, panOffset]);
-
-        // Pan controls
-        const handleMouseDown = useCallback((e) => {
-            if (e.button === 0) { // Left mouse button
-                setIsPanning(true);
-                setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
-                e.currentTarget.style.cursor = 'grabbing';
+            // Cytoscape handles wheel zoom internally
+            // Just update our state to match
+            const cy = window.GraphApp.core.getCytoscapeInstance();
+            if (cy) {
+                setSettings(prev => ({ ...prev, zoom: Math.round(cy.zoom() * 100) }));
             }
-        }, [panOffset]);
+        }, []);
+
+        // Pan controls - Cytoscape handles panning natively via drag
+        // These handlers are no-ops but kept for compatibility
+        const handleMouseDown = useCallback((e) => {
+            // Cytoscape handles pan via native drag
+        }, []);
 
         const handleMouseMove = useCallback((e) => {
-            if (isPanning) {
-                const newX = e.clientX - panStart.x;
-                const newY = e.clientY - panStart.y;
-                setPanOffset({ x: newX, y: newY });
-                applyTransform(settings.zoom, newX, newY);
-            }
-        }, [isPanning, panStart, settings.zoom, applyTransform]);
+            // Cytoscape handles pan via native drag
+        }, []);
 
         const handleMouseUp = useCallback((e) => {
-            if (isPanning) {
-                setIsPanning(false);
-                e.currentTarget.style.cursor = 'grab';
-            }
-        }, [isPanning]);
+            // Cytoscape handles pan via native drag
+        }, []);
 
         // Calculate optimal table width to fit all content without truncation
         const calculateOptimalTableWidth = useCallback(() => {
@@ -524,8 +503,13 @@
                     return;
                 }
 
+                // Clear Cytoscape positions for fresh layout on new file
+                window.GraphApp.core.clearCytoscapePositions();
+                isFirstRenderRef.current = true;
+
                 setNodes(importedNodes);
                 setErrors([]);
+                setCurrentFileName(file.name);
 
                 // Validate imported data
                 const validationErrors = window.GraphApp.utils.validateNodes(importedNodes);
@@ -911,6 +895,35 @@
             setHiddenGroups(allGroups);
         }, [nodes]);
 
+        // Toggle hide unlinked nodes - with mutual exclusivity
+        const toggleHideUnlinked = useCallback(() => {
+            if (hideUnlinkedNodes) {
+                // Turning OFF - just disable
+                setHideUnlinkedNodes(false);
+            } else {
+                // Turning ON - disable the other first to prevent both hidden
+                setHideLinkedNodes(false);
+                setHideUnlinkedNodes(true);
+            }
+        }, [hideUnlinkedNodes]);
+
+        // Toggle hide linked nodes - with mutual exclusivity
+        const toggleHideLinked = useCallback(() => {
+            if (hideLinkedNodes) {
+                // Turning OFF - just disable
+                setHideLinkedNodes(false);
+            } else {
+                // Turning ON - disable the other first to prevent both hidden
+                setHideUnlinkedNodes(false);
+                setHideLinkedNodes(true);
+            }
+        }, [hideLinkedNodes]);
+
+        // Toggle hide/show link lines (independent of node visibility)
+        const toggleHideLinks = useCallback(() => {
+            setHideLinks(!hideLinks);
+        }, [hideLinks]);
+
         // Sort table
         const handleSort = useCallback((column) => {
             const newDirection = sortColumn === column && sortDirection === 'asc' ? 'desc' : 'asc';
@@ -966,6 +979,11 @@
             setShowExportModal(false);
         }, [nodes]);
 
+        const handleExportDOT = useCallback(() => {
+            window.GraphApp.exports.exportDOT(nodes, 'graph.dot', settings);
+            setShowExportModal(false);
+        }, [nodes, settings]);
+
         const handleExportPDF = useCallback(async () => {
             try {
                 await window.GraphApp.exports.exportPDF('mermaid-container', 'graph.pdf');
@@ -975,12 +993,53 @@
             }
         }, []);
 
+        // Canvas export handlers (visible nodes only)
+        const handleExportCSVCanvas = useCallback(() => {
+            window.GraphApp.exports.exportCSVCanvas(nodes, 'graph-canvas.csv');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleExportExcelCanvas = useCallback(async () => {
+            const filteredNodes = window.GraphApp.exports.filterVisibleNodes(nodes);
+            await window.GraphApp.core.exportExcel(filteredNodes, 'graph-canvas.xlsx');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleExportJSONCanvas = useCallback(() => {
+            window.GraphApp.exports.exportJSONCanvas(nodes, 'graph-canvas.json');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleExportGraphMLCanvas = useCallback(() => {
+            window.GraphApp.exports.exportGraphMLCanvas(nodes, 'graph-canvas.graphml');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleExportMermaidCanvas = useCallback(() => {
+            const filteredNodes = window.GraphApp.exports.filterVisibleNodes(nodes);
+            const mermaidSyntax = window.GraphApp.core.generateMermaid(filteredNodes, settings, new Set());
+            window.GraphApp.exports.exportMermaid(mermaidSyntax, 'graph-canvas.mmd');
+            setShowExportModal(false);
+        }, [nodes, settings]);
+
+        const handleExportDOTCanvas = useCallback(() => {
+            window.GraphApp.exports.exportDOTCanvas(nodes, 'graph-canvas.dot', settings);
+            setShowExportModal(false);
+        }, [nodes, settings]);
+
         // Load demo by name
         const loadDemo = useCallback((demoName) => {
             const demos = window.GraphApp.data.demos;
             const demoData = demos[demoName] || window.GraphApp.data.sample;
-            setNodes(demoData);
+
+            // Clear Cytoscape positions for fresh layout on new demo
+            window.GraphApp.core.clearCytoscapePositions();
+            isFirstRenderRef.current = true;
+
+            // Spread to create new array reference (forces re-render even if same data)
+            setNodes([...demoData]);
             setShowDemoMenu(false);
+            setCurrentFileName(demoName);  // Show demo name in toolbar
 
             // Validate demo data
             const validationErrors = window.GraphApp.utils.validateNodes(demoData);
@@ -1121,18 +1180,34 @@
                             className: "w-px h-6 bg-gray-300"
                         }),
 
-                        // Direction selector
+                        // Layout algorithm selector
                         React.createElement('select', {
-                            key: 'direction',
-                            value: settings.direction,
-                            onChange: (e) => setSettings({ ...settings, direction: e.target.value }),
+                            key: 'layout',
+                            value: settings.layout,
+                            onChange: (e) => {
+                                const newLayout = e.target.value;
+                                setSettings({ ...settings, layout: newLayout });
+                                // Run appropriate layout algorithm
+                                if (newLayout === 'fcose') {
+                                    window.GraphApp.core.runFcoseLayout();
+                                } else if (newLayout === 'dagre-TB') {
+                                    window.GraphApp.core.runDagreLayout('TB');
+                                } else if (newLayout === 'dagre-LR') {
+                                    window.GraphApp.core.runDagreLayout('LR');
+                                } else if (newLayout === 'compact-TB') {
+                                    window.GraphApp.core.runAutoLayout('TB');
+                                } else if (newLayout === 'compact-LR') {
+                                    window.GraphApp.core.runAutoLayout('LR');
+                                }
+                            },
                             className: "px-2 py-1 text-xs border border-gray-300 rounded",
-                            title: "Graph direction"
+                            title: "Layout algorithm - Smart minimizes edge crossings, Hierarchical for flow diagrams, Compact uses simple grid"
                         }, [
-                            React.createElement('option', { key: 'tb', value: 'TB' }, "↓ Top → Bottom"),
-                            React.createElement('option', { key: 'bt', value: 'BT' }, "↑ Bottom → Top"),
-                            React.createElement('option', { key: 'lr', value: 'LR' }, "→ Left → Right"),
-                            React.createElement('option', { key: 'rl', value: 'RL' }, "← Right → Left")
+                            React.createElement('option', { key: 'fcose', value: 'fcose' }, "◎ Smart Layout"),
+                            React.createElement('option', { key: 'dagre-tb', value: 'dagre-TB' }, "↓ Hierarchical"),
+                            React.createElement('option', { key: 'dagre-lr', value: 'dagre-LR' }, "→ Hierarchical"),
+                            React.createElement('option', { key: 'compact-tb', value: 'compact-TB' }, "⊞ Compact ↓"),
+                            React.createElement('option', { key: 'compact-lr', value: 'compact-LR' }, "⊞ Compact →")
                         ]),
 
                         React.createElement('div', {
@@ -1149,42 +1224,11 @@
                             title: "Edge style"
                         }, [
                             React.createElement('option', { key: 'basis', value: 'basis' }, "⌇ Curved"),
-                            React.createElement('option', { key: 'linear', value: 'linear' }, "⟋ Straight"),
-                            React.createElement('option', { key: 'step', value: 'step' }, "⊏ Orthogonal")
+                            React.createElement('option', { key: 'linear', value: 'linear' }, "⟋ Straight")
                         ]),
 
                         React.createElement('div', {
                             key: 'div4',
-                            className: "w-px h-6 bg-gray-300"
-                        }),
-
-                        // Group visibility controls
-                        React.createElement('div', {
-                            key: 'group-visibility',
-                            className: "flex items-center gap-1"
-                        }, [
-                            React.createElement('button', {
-                                key: 'show-all',
-                                onClick: showAllGroups,
-                                className: "flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 rounded",
-                                title: "Show all groups"
-                            }, [
-                                React.createElement(Eye, { key: 'icon', size: 12 }),
-                                'Show All'
-                            ]),
-                            React.createElement('button', {
-                                key: 'hide-all',
-                                onClick: hideAllGroups,
-                                className: "flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded",
-                                title: "Hide all groups"
-                            }, [
-                                React.createElement(EyeOff, { key: 'icon', size: 12 }),
-                                'Hide All'
-                            ])
-                        ]),
-
-                        React.createElement('div', {
-                            key: 'div6',
                             className: "w-px h-6 bg-gray-300"
                         }),
 
@@ -1225,15 +1269,60 @@
                                 React.createElement(Maximize2, { key: 'icon', size: 12 }),
                                 'Fit'
                             ]),
+                            // Re-layout button
+                            React.createElement('button', {
+                                key: 'relayout-btn',
+                                onClick: () => {
+                                    if (settings.layout === 'fcose') {
+                                        window.GraphApp.core.runFcoseLayout();
+                                    } else if (settings.layout === 'dagre-TB') {
+                                        window.GraphApp.core.runDagreLayout('TB');
+                                    } else if (settings.layout === 'dagre-LR') {
+                                        window.GraphApp.core.runDagreLayout('LR');
+                                    } else if (settings.layout === 'compact-TB') {
+                                        window.GraphApp.core.runAutoLayout('TB');
+                                    } else if (settings.layout === 'compact-LR') {
+                                        window.GraphApp.core.runAutoLayout('LR');
+                                    }
+                                },
+                                className: "px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600",
+                                title: "Re-arrange nodes using current layout"
+                            }, "Re-layout"),
                             React.createElement('button', {
                                 key: 'hide-unlinked',
-                                onClick: () => setHideUnlinkedNodes(!hideUnlinkedNodes),
+                                onClick: toggleHideUnlinked,
                                 className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideUnlinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
-                                title: hideUnlinkedNodes ? "Show all nodes (including unlinked)" : "Hide unlinked nodes from canvas"
+                                title: hideUnlinkedNodes ? "Show all nodes" : "Hide unlinked nodes from canvas"
                             }, [
                                 React.createElement(hideUnlinkedNodes ? Eye : EyeOff, { key: 'icon', size: 12 }),
                                 hideUnlinkedNodes ? 'Show Unlinked' : 'Hide Unlinked'
-                            ])
+                            ]),
+                            React.createElement('button', {
+                                key: 'hide-linked',
+                                onClick: toggleHideLinked,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                title: hideLinkedNodes ? "Show all nodes" : "Hide linked nodes from canvas"
+                            }, [
+                                React.createElement(hideLinkedNodes ? Eye : EyeOff, { key: 'icon', size: 12 }),
+                                hideLinkedNodes ? 'Show Linked' : 'Hide Linked'
+                            ]),
+                            React.createElement('button', {
+                                key: 'hide-links',
+                                onClick: toggleHideLinks,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinks ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                title: hideLinks ? "Show link lines" : "Hide link lines from canvas"
+                            }, [
+                                React.createElement(hideLinks ? Eye : EyeOff, { key: 'icon', size: 12 }),
+                                hideLinks ? 'Show Links' : 'Hide Links'
+                            ]),
+                            // Filename display (unobtrusive, only shown when file is loaded)
+                            ...(currentFileName ? [
+                                React.createElement('span', {
+                                    key: 'filename',
+                                    className: "text-xs text-gray-400 ml-2 truncate max-w-[150px]",
+                                    title: currentFileName
+                                }, currentFileName)
+                            ] : [])
                         ])
                     ])
                 ])
@@ -1440,17 +1529,24 @@
                             ])
                         ]),
                         React.createElement('tbody', { key: 'tbody' },
-                            nodes.filter((node, index) => {
-                                // Show all rows if group is NOT collapsed
-                                if (!collapsedGroups.has(node.Group_xA)) return true;
+                            // PERFORMANCE: Single-pass filter with O(1) lookups instead of O(n²)
+                            nodes.reduce((acc, node, index) => {
+                                // Track if this is first row of a contiguous group cluster
+                                const prevGroup = acc.length > 0 ? acc[acc.length - 1].node.Group_xA : null;
+                                const isFirstOfCluster = prevGroup !== node.Group_xA;
 
-                                // If collapsed, only show the FIRST node of this group
-                                const firstIndexOfGroup = nodes.findIndex(n => n.Group_xA === node.Group_xA);
-                                return index === firstIndexOfGroup;
-                            }).map((node, filteredIndex) => {
-                                // Find original index for edit operations
-                                const index = nodes.findIndex(n => n === node);
-                                const isCollapsed = collapsedGroups.has(node.Group_xA);
+                                // Show all rows if group is NOT collapsed
+                                if (!collapsedGroups.has(node.Group_xA)) {
+                                    acc.push({ node, index, isCollapsed: false, isFirstOfCluster });
+                                } else {
+                                    // If collapsed, only show FIRST node - O(1) lookup
+                                    if (groupFirstIndex.get(node.Group_xA) === index) {
+                                        acc.push({ node, index, isCollapsed: true, isFirstOfCluster });
+                                    }
+                                }
+                                return acc;
+                            }, []).map(({ node, index, isCollapsed, isFirstOfCluster }, filteredIndex) => {
+                                // Original index preserved from reduce - no findIndex needed!
                                 const hasError = errorRowMap[index] && errorRowMap[index].length > 0;
 
                                 return React.createElement('tr', {
@@ -1487,7 +1583,7 @@
                                         value: node.Group_xA,
                                         onChange: (e) => handleCellEdit(index, 'Group_xA', e.target.value),
                                         title: isCollapsed ? `Editing this will rename all nodes in group "${node.Group_xA}"` : node.Group_xA,
-                                        className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : 'border-gray-300'}`
+                                        className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : (isFirstOfCluster ? 'font-bold border-gray-300' : 'border-gray-300')}`
                                     })),
                                     React.createElement('td', {
                                         key: 'node',
@@ -1638,142 +1734,172 @@
                 ])
             ]),
 
-            // Export modal
+            // Export modal - Two column layout: Table vs Canvas
             showExportModal && React.createElement('div', {
                 key: 'export-modal',
                 className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
                 onClick: () => setShowExportModal(false)
             }, React.createElement('div', {
                 key: 'modal-content',
-                className: "bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4",
+                className: "bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4",
                 onClick: (e) => e.stopPropagation()
             }, [
                 React.createElement('h3', {
                     key: 'title',
-                    className: "text-lg font-semibold mb-3"
+                    className: "text-lg font-semibold mb-4 text-center"
                 }, "Export"),
 
-                // Red disclaimer
+                // Two column grid
+                React.createElement('div', {
+                    key: 'columns',
+                    className: "grid grid-cols-2 gap-4 mb-4"
+                }, [
+                    // TABLE column
+                    React.createElement('div', {
+                        key: 'table-col',
+                        className: "space-y-2"
+                    }, [
+                        React.createElement('div', {
+                            key: 'table-header',
+                            className: "text-center pb-2 border-b border-gray-200"
+                        }, [
+                            React.createElement('div', { key: 't1', className: "font-bold text-gray-700" }, "Table"),
+                            React.createElement('div', { key: 't2', className: "text-xs text-gray-500" }, "(all rows)")
+                        ]),
+                        React.createElement('button', {
+                            key: 'csv', onClick: handleExportCSV,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                        ]),
+                        React.createElement('button', {
+                            key: 'excel', onClick: handleExportExcel,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excel")
+                        ]),
+                        React.createElement('button', {
+                            key: 'json', onClick: handleExportJSON,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "JSON")
+                        ]),
+                        React.createElement('button', {
+                            key: 'mermaid', onClick: handleExportMermaid,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Mermaid")
+                        ]),
+                        React.createElement('button', {
+                            key: 'graphml', onClick: handleExportGraphML,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "GraphML")
+                        ]),
+                        React.createElement('button', {
+                            key: 'dot', onClick: handleExportDOT,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                        ])
+                    ]),
+
+                    // CANVAS column
+                    React.createElement('div', {
+                        key: 'canvas-col',
+                        className: "space-y-2"
+                    }, [
+                        React.createElement('div', {
+                            key: 'canvas-header',
+                            className: "text-center pb-2 border-b border-blue-200"
+                        }, [
+                            React.createElement('div', { key: 'c1', className: "font-bold text-blue-700" }, "Canvas"),
+                            React.createElement('div', { key: 'c2', className: "text-xs text-blue-500" }, "(visible only)")
+                        ]),
+                        React.createElement('button', {
+                            key: 'csv', onClick: handleExportCSVCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                        ]),
+                        React.createElement('button', {
+                            key: 'excel', onClick: handleExportExcelCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excel")
+                        ]),
+                        React.createElement('button', {
+                            key: 'json', onClick: handleExportJSONCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "JSON")
+                        ]),
+                        React.createElement('button', {
+                            key: 'mermaid', onClick: handleExportMermaidCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Mermaid")
+                        ]),
+                        React.createElement('button', {
+                            key: 'graphml', onClick: handleExportGraphMLCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "GraphML")
+                        ]),
+                        React.createElement('button', {
+                            key: 'dot', onClick: handleExportDOTCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                        ]),
+                        // Separator for image formats
+                        React.createElement('div', { key: 'sep', className: "border-t border-blue-200 pt-2 mt-2" }),
+                        React.createElement('button', {
+                            key: 'png', onClick: handleExportPNG,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(Image, { key: 'i', size: 14, className: "text-blue-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "PNG")
+                        ]),
+                        React.createElement('button', {
+                            key: 'svg', onClick: handleExportSVG,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(Image, { key: 'i', size: 14, className: "text-purple-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "SVG")
+                        ]),
+                        React.createElement('button', {
+                            key: 'pdf', onClick: handleExportPDF,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-red-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "PDF")
+                        ])
+                    ])
+                ]),
+
+                // Red disclaimer at bottom
                 React.createElement('p', {
                     key: 'disclaimer',
-                    className: "text-xs text-red-600 mb-3 pb-2 border-b border-red-200"
+                    className: "text-xs text-red-600 mb-3 pt-3 border-t border-red-200"
                 }, "Disclaimer: This application is provided as-is for demonstration purposes only. The developers assume no responsibility for data loss, errors, or any damages resulting from its use."),
 
-                // Data Formats Section
-                React.createElement('div', {
-                    key: 'data-section',
-                    className: "mb-3"
-                }, [
-                    React.createElement('div', {
-                        key: 'data-label',
-                        className: "text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide"
-                    }, "Data"),
-                    React.createElement('div', {
-                        key: 'data-options',
-                        className: "grid grid-cols-3 gap-1"
-                    }, [
-                        React.createElement('button', {
-                            key: 'csv',
-                            onClick: handleExportCSV,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(FileText, { key: 'icon', size: 16, className: "mb-1 text-gray-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "CSV")
-                        ]),
-                        React.createElement('button', {
-                            key: 'excel',
-                            onClick: handleExportExcel,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(File, { key: 'icon', size: 16, className: "mb-1 text-green-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "Excel")
-                        ]),
-                        React.createElement('button', {
-                            key: 'json',
-                            onClick: handleExportJSON,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(FileText, { key: 'icon', size: 16, className: "mb-1 text-yellow-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "JSON")
-                        ])
-                    ])
-                ]),
-
-                // Image Formats Section
-                React.createElement('div', {
-                    key: 'image-section',
-                    className: "mb-3"
-                }, [
-                    React.createElement('div', {
-                        key: 'image-label',
-                        className: "text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide"
-                    }, "Image"),
-                    React.createElement('div', {
-                        key: 'image-options',
-                        className: "grid grid-cols-3 gap-1"
-                    }, [
-                        React.createElement('button', {
-                            key: 'svg',
-                            onClick: handleExportSVG,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(Image, { key: 'icon', size: 16, className: "mb-1 text-purple-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "SVG")
-                        ]),
-                        React.createElement('button', {
-                            key: 'png',
-                            onClick: handleExportPNG,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(Image, { key: 'icon', size: 16, className: "mb-1 text-blue-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "PNG")
-                        ]),
-                        React.createElement('button', {
-                            key: 'pdf',
-                            onClick: handleExportPDF,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(FileText, { key: 'icon', size: 16, className: "mb-1 text-red-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "PDF")
-                        ])
-                    ])
-                ]),
-
-                // Graph Formats Section
-                React.createElement('div', {
-                    key: 'graph-section',
-                    className: "mb-3"
-                }, [
-                    React.createElement('div', {
-                        key: 'graph-label',
-                        className: "text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide"
-                    }, "Graph Tools"),
-                    React.createElement('div', {
-                        key: 'graph-options',
-                        className: "grid grid-cols-2 gap-1"
-                    }, [
-                        React.createElement('button', {
-                            key: 'mermaid',
-                            onClick: handleExportMermaid,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(FileText, { key: 'icon', size: 16, className: "mb-1 text-pink-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "Mermaid")
-                        ]),
-                        React.createElement('button', {
-                            key: 'graphml',
-                            onClick: handleExportGraphML,
-                            className: "flex flex-col items-center px-2 py-2 text-center bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
-                        }, [
-                            React.createElement(FileText, { key: 'icon', size: 16, className: "mb-1 text-orange-600" }),
-                            React.createElement('div', { key: 'name', className: "text-xs font-medium" }, "GraphML")
-                        ])
-                    ])
-                ]),
                 React.createElement('button', {
                     key: 'close',
                     onClick: () => setShowExportModal(false),
-                    className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    className: "w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
                 }, "Close")
             ])),
 

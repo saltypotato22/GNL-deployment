@@ -99,57 +99,19 @@ input[type="number"] {
 .resource-color-7 { background-color: #F97316; } /* Deep Orange */
 .resource-color-8 { background-color: #06B6D4; } /* Cyan */
 
-/* Mermaid diagram container */
+/* Cytoscape graph container */
 #mermaid-container {
     width: 100%;
     height: 100%;
     position: relative;
     user-select: none;
     overflow: hidden;
+    background-color: #ffffff;
 }
 
-#mermaid-container svg {
-    position: absolute;
-    top: 0;
-    left: 0;
-    max-width: none;
-    max-height: none;
-    pointer-events: none;
-    transition: transform 250ms ease-out; /* Smooth zoom/pan transitions */
-}
-
-/* Mermaid subgraph (group) styling */
-#mermaid-container .cluster rect {
-    stroke-width: 1px !important;
-    fill: none !important;
-    stroke: #999 !important;
-}
-
-#mermaid-container .cluster-label text {
-    font-weight: 600 !important;
-    font-size: 12px !important;
-}
-
-/* Link/edge line thickness */
-#mermaid-container .flowchart-link,
-#mermaid-container path.path {
-    stroke-width: 1px !important;
-}
-
-/* Node styling */
-#mermaid-container rect.node {
-    rx: 3px !important;
-}
-
-/* Disable transition during manual pan to avoid lag */
-.panning #mermaid-container svg {
-    transition: none;
-}
-
-/* Zoom/Pan container for Mermaid */
-.mermaid-zoom-container {
-    transform-origin: center center;
-    transition: transform 0.2s ease-out;
+/* Cytoscape canvas styling - Cytoscape handles its own internal rendering */
+#mermaid-container canvas {
+    outline: none;
 }
 
 /* Table cell error states */
@@ -326,10 +288,6 @@ textarea:focus-visible,
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
-    }
-
-    #mermaid-container svg {
-        transition: none;
     }
 }
 

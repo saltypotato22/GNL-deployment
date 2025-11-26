@@ -178,35 +178,25 @@
     };
 
     /**
-     * Export diagram as SVG image
-     * @param {String} containerId - ID of container with SVG
+     * Export diagram as SVG image using Cytoscape
+     * @param {String} containerId - ID of container (kept for API compatibility)
      * @param {String} filename - Output filename
      */
     const exportSVG = function(containerId, filename) {
-        const container = document.getElementById(containerId);
-        if (!container) {
-            throw new Error('Container not found');
+        const cy = window.GraphApp.core.getCytoscapeInstance();
+        if (!cy) {
+            throw new Error('No graph to export');
         }
 
-        const svg = container.querySelector('svg');
-        if (!svg) {
-            throw new Error('No SVG found in container');
-        }
+        // Use Cytoscape's native SVG export
+        const svgContent = cy.svg({
+            full: true,  // Include all elements
+            scale: 1,
+            bg: '#ffffff'
+        });
 
-        // Clone SVG to avoid modifying the original
-        const clonedSvg = svg.cloneNode(true);
-
-        // Reset any transforms (zoom/pan)
-        clonedSvg.style.transform = '';
-        clonedSvg.style.transformOrigin = '';
-
-        // Ensure proper namespaces
-        clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-
-        // Serialize with XML declaration
-        const svgData = '<?xml version="1.0" encoding="UTF-8"?>\n' +
-            new XMLSerializer().serializeToString(clonedSvg);
+        // Add XML declaration
+        const svgData = '<?xml version="1.0" encoding="UTF-8"?>\n' + svgContent;
 
         // Download
         const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
@@ -431,104 +421,152 @@
             .replace(/'/g, '&apos;');
     };
 
-    /**
-     * Export diagram as PNG image
-     * @param {String} containerId - ID of container with SVG
-     * @param {String} filename - Output filename
-     */
-    const exportPNG = async function(containerId, filename) {
-        const container = document.getElementById(containerId);
-        if (!container) {
-            throw new Error('Container not found');
-        }
-
-        const svg = container.querySelector('svg');
-        if (!svg) {
-            throw new Error('No SVG found in container');
-        }
-
-        // Clone SVG and reset transforms
-        const clonedSvg = svg.cloneNode(true);
-        clonedSvg.style.transform = '';
-        clonedSvg.style.transformOrigin = '';
-
-        // Get dimensions from viewBox or attributes
-        const viewBox = svg.getAttribute('viewBox');
-        let width, height;
-
-        if (viewBox) {
-            const parts = viewBox.split(' ');
-            width = parseFloat(parts[2]) + 40;
-            height = parseFloat(parts[3]) + 40;
-        } else {
-            width = parseFloat(svg.getAttribute('width')) || 800;
-            height = parseFloat(svg.getAttribute('height')) || 600;
-            width += 40;
-            height += 40;
-        }
-
-        // Convert foreignObject elements to standard SVG text
-        // This is necessary because browsers block foreignObject in canvas for security
-        convertForeignObjectsToText(clonedSvg);
-
-        // Ensure proper namespaces
-        clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-
-        // Set explicit dimensions on the SVG
-        clonedSvg.setAttribute('width', width - 40);
-        clonedSvg.setAttribute('height', height - 40);
-
-        // Create canvas
-        const canvas = document.createElement('canvas');
-        const scale = 2; // Higher resolution
-        canvas.width = width * scale;
-        canvas.height = height * scale;
-        const ctx = canvas.getContext('2d');
-        ctx.scale(scale, scale);
-
-        // Fill white background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, width, height);
-
-        // Convert SVG to data URL (more reliable than blob URL)
-        const svgData = new XMLSerializer().serializeToString(clonedSvg);
-        const svgBase64 = btoa(unescape(encodeURIComponent(svgData)));
-        const svgUrl = 'data:image/svg+xml;base64,' + svgBase64;
-
-        // Load SVG as image and draw to canvas
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = function() {
-                ctx.drawImage(img, 20, 20);
-
-                // Convert canvas to PNG and download
-                canvas.toBlob(function(blob) {
-                    if (!blob) {
-                        reject(new Error('Failed to create PNG blob'));
-                        return;
-                    }
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename || 'graph.png';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    resolve();
-                }, 'image/png');
-            };
-            img.onerror = function(error) {
-                reject(new Error('Failed to load SVG as image. Try SVG export instead.'));
-            };
-            img.src = svgUrl;
-        });
+    // Helper function to escape DOT special characters
+    const escapeDot = function(str) {
+        if (!str) return '';
+        return str.toString()
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/\n/g, '\\n');
     };
 
     /**
-     * Export diagram as PDF
-     * @param {String} containerId - ID of container with SVG
+     * Export nodes to GraphViz DOT format
+     * @param {Array} nodes - Array of node objects
+     * @param {String} filename - Output filename
+     * @param {Object} settings - Layout settings (for direction)
+     */
+    const exportDOT = function(nodes, filename, settings) {
+        const direction = settings && settings.direction === 'LR' ? 'LR' : 'TB';
+
+        let dot = 'digraph G {\n';
+        dot += `    rankdir=${direction};\n`;
+        dot += '    node [shape=box, style=rounded, fontname="Arial"];\n';
+        dot += '    edge [fontname="Arial", fontsize=10];\n';
+        dot += '    compound=true;\n\n';
+
+        // Group nodes by Group_xA
+        const groups = {};
+        nodes.forEach(node => {
+            const groupName = node.Group_xA || 'Ungrouped';
+            if (!groups[groupName]) {
+                groups[groupName] = [];
+            }
+            groups[groupName].push(node);
+        });
+
+        // Generate subgraphs for each group
+        let clusterIndex = 0;
+        Object.keys(groups).forEach(groupName => {
+            const groupNodes = groups[groupName];
+
+            dot += `    subgraph cluster_${clusterIndex} {\n`;
+            dot += `        label="${escapeDot(groupName)}";\n`;
+            dot += '        style=dashed;\n';
+            dot += '        bgcolor="#f8f8f8";\n';
+
+            // Add nodes in this group
+            groupNodes.forEach(node => {
+                const nodeId = escapeDot(node.ID_xA || '');
+                const nodeLabel = escapeDot(node.Node_xA || '');
+                dot += `        "${nodeId}" [label="${nodeLabel}"];\n`;
+            });
+
+            dot += '    }\n\n';
+            clusterIndex++;
+        });
+
+        // Add edges
+        nodes.forEach(node => {
+            if (node.Linked_Node_ID_xA && node.ID_xA && !node.Hidden_Link_xB) {
+                const sourceId = escapeDot(node.ID_xA);
+                const targetId = escapeDot(node.Linked_Node_ID_xA);
+                const label = escapeDot(node.Link_Label_xB || '');
+                const arrowType = node.Link_Arrow_xB || 'To';
+
+                let arrowhead = 'normal';
+                let arrowtail = 'none';
+                let dir = 'forward';
+
+                switch (arrowType) {
+                    case 'To':
+                        dir = 'forward';
+                        arrowhead = 'normal';
+                        arrowtail = 'none';
+                        break;
+                    case 'From':
+                        dir = 'back';
+                        arrowhead = 'none';
+                        arrowtail = 'normal';
+                        break;
+                    case 'Both':
+                        dir = 'both';
+                        arrowhead = 'normal';
+                        arrowtail = 'normal';
+                        break;
+                    case 'None':
+                        dir = 'none';
+                        arrowhead = 'none';
+                        arrowtail = 'none';
+                        break;
+                }
+
+                let edgeAttr = `dir=${dir}`;
+                if (label) {
+                    edgeAttr += `, label="${label}"`;
+                }
+
+                dot += `    "${sourceId}" -> "${targetId}" [${edgeAttr}];\n`;
+            }
+        });
+
+        dot += '}\n';
+
+        // Download
+        const blob = new Blob([dot], { type: 'text/vnd.graphviz;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'graph.dot';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    /**
+     * Export diagram as PNG image using Cytoscape
+     * @param {String} containerId - ID of container (kept for API compatibility)
+     * @param {String} filename - Output filename
+     */
+    const exportPNG = async function(containerId, filename) {
+        const cy = window.GraphApp.core.getCytoscapeInstance();
+        if (!cy) {
+            throw new Error('No graph to export');
+        }
+
+        // Use Cytoscape's native PNG export
+        const pngBlob = await cy.png({
+            output: 'blob',
+            bg: '#ffffff',
+            scale: 2,  // 2x resolution for crisp output
+            full: true  // Include all elements, not just viewport
+        });
+
+        // Download
+        const url = URL.createObjectURL(pngBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'graph.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    /**
+     * Export diagram as PDF using Cytoscape
+     * @param {String} containerId - ID of container (kept for API compatibility)
      * @param {String} filename - Output filename
      */
     const exportPDF = async function(containerId, filename) {
@@ -537,45 +575,15 @@
             throw new Error('PDF export requires jsPDF library. Please add it to use this feature.');
         }
 
-        const container = document.getElementById(containerId);
-        if (!container) {
-            throw new Error('Container not found');
+        const cy = window.GraphApp.core.getCytoscapeInstance();
+        if (!cy) {
+            throw new Error('No graph to export');
         }
 
-        const svg = container.querySelector('svg');
-        if (!svg) {
-            throw new Error('No SVG found in container');
-        }
-
-        // Clone SVG and reset transforms
-        const clonedSvg = svg.cloneNode(true);
-        clonedSvg.style.transform = '';
-        clonedSvg.style.transformOrigin = '';
-
-        // Get dimensions from viewBox
-        const viewBox = svg.getAttribute('viewBox');
-        let width, height;
-
-        if (viewBox) {
-            const parts = viewBox.split(' ');
-            width = parseFloat(parts[2]);
-            height = parseFloat(parts[3]);
-        } else {
-            width = parseFloat(svg.getAttribute('width')) || 800;
-            height = parseFloat(svg.getAttribute('height')) || 600;
-        }
-
-        // Convert foreignObject elements to standard SVG text
-        // This prevents canvas tainting from external resources
-        convertForeignObjectsToText(clonedSvg);
-
-        // Ensure proper namespaces
-        clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-
-        // Set explicit dimensions on the SVG
-        clonedSvg.setAttribute('width', width);
-        clonedSvg.setAttribute('height', height);
+        // Get bounding box of all elements
+        const bb = cy.elements().boundingBox();
+        const width = bb.w + 80;  // Add padding
+        const height = bb.h + 80;
 
         // Determine orientation
         const orientation = width > height ? 'landscape' : 'portrait';
@@ -585,58 +593,99 @@
         const pdf = new jsPDF({
             orientation: orientation,
             unit: 'pt',
-            format: [width + 40, height + 40],
+            format: [width, height],
             compress: true
         });
 
-        // Convert SVG to base64 data URL (prevents canvas tainting)
-        const svgData = new XMLSerializer().serializeToString(clonedSvg);
-        const svgBase64 = btoa(unescape(encodeURIComponent(svgData)));
-        const svgUrl = 'data:image/svg+xml;base64,' + svgBase64;
-
-        // Load SVG as image and render to canvas
-        const img = await new Promise((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => resolve(image);
-            image.onerror = () => reject(new Error('Failed to load SVG for PDF export. Try PNG or SVG export instead.'));
-            image.src = svgUrl;
-        });
-
-        // Smart scaling: use 1.5x for reasonable quality without bloating file size
-        // For very large diagrams (>2000px), reduce to 1x
+        // Get PNG from Cytoscape (uses JPEG internally for smaller size)
+        // Scale based on diagram size - larger diagrams use lower scale
         const maxDimension = Math.max(width, height);
         const scale = maxDimension > 2000 ? 1 : 1.5;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width * scale;
-        canvas.height = height * scale;
-        const ctx = canvas.getContext('2d');
-        ctx.scale(scale, scale);
+        const pngDataUrl = cy.png({
+            output: 'base64uri',
+            bg: '#ffffff',
+            scale: scale,
+            full: true
+        });
 
-        // Fill white background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, width, height);
-
-        // Draw the SVG
-        ctx.drawImage(img, 0, 0);
-
-        // Use JPEG with 90% quality - much smaller than PNG
-        const imgData = canvas.toDataURL('image/jpeg', 0.90);
-        pdf.addImage(imgData, 'JPEG', 20, 20, width, height);
+        // Add image to PDF
+        pdf.addImage(pngDataUrl, 'PNG', 40, 40, bb.w, bb.h);
 
         pdf.save(filename || 'graph.pdf');
     };
 
+    // =========================================
+    // CANVAS-FILTERED EXPORTS
+    // Export only nodes visible on canvas
+    // =========================================
+
+    /**
+     * Filter nodes to only those currently visible on canvas
+     * @param {Array} nodes - Full nodes array
+     * @returns {Array} Filtered nodes array
+     */
+    const filterVisibleNodes = function(nodes) {
+        const getVisibleIDs = window.GraphApp.core.getVisibleNodeIDs;
+        if (!getVisibleIDs) return nodes; // Fallback if function not available
+
+        const visibleIDs = getVisibleIDs();
+        if (visibleIDs.size === 0) return nodes; // Fallback if no canvas
+
+        return nodes.filter(node => visibleIDs.has(node.ID_xA));
+    };
+
+    /**
+     * Export visible nodes to CSV (canvas-filtered)
+     */
+    const exportCSVCanvas = function(nodes, filename) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        exportCSV(filteredNodes, filename || 'graph-canvas.csv');
+    };
+
+    /**
+     * Export visible nodes to JSON (canvas-filtered)
+     */
+    const exportJSONCanvas = function(nodes, filename) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        exportJSON(filteredNodes, filename || 'graph-canvas.json');
+    };
+
+    /**
+     * Export visible nodes to GraphML (canvas-filtered)
+     */
+    const exportGraphMLCanvas = function(nodes, filename) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        exportGraphML(filteredNodes, filename || 'graph-canvas.graphml');
+    };
+
+    /**
+     * Export visible nodes to DOT (canvas-filtered)
+     */
+    const exportDOTCanvas = function(nodes, filename, settings) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        exportDOT(filteredNodes, filename || 'graph-canvas.dot', settings);
+    };
+
     // Expose to global namespace
     window.GraphApp.exports = {
+        // Table exports (all rows)
         exportCSV,
         importCSV,
         exportMermaid,
         importMermaid,
-        exportPNG,
-        exportSVG,
         exportJSON,
         exportGraphML,
+        exportDOT,
+        // Canvas exports (visible only)
+        exportCSVCanvas,
+        exportJSONCanvas,
+        exportGraphMLCanvas,
+        exportDOTCanvas,
+        filterVisibleNodes,
+        // Image exports (always from canvas)
+        exportPNG,
+        exportSVG,
         exportPDF
     };
 

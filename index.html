@@ -12,34 +12,19 @@
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.tailwindcss.com/3.4.1"></script>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({
-            startOnLoad: false,
-            theme: 'base',
-            themeVariables: {
-                fontSize: '14px',
-                // White background for link labels to prevent overlap with lines
-                edgeLabelBackground: '#ffffff',
-                // Make subgraph (group) borders thinner
-                clusterBkg: 'none',
-                clusterBorder: '#999',
-                lineColor: '#333',
-                // Minimal node padding
-                nodePadding: 8,  // Total padding (4px each side)
-                nodeTextColor: '#333'
-            },
-            flowchart: {
-                nodeSpacing: 50,      // Horizontal spacing between nodes (restored to original)
-                rankSpacing: 50,      // Vertical spacing between ranks (restored to original)
-                padding: 50,          // Overall diagram padding
-                curve: 'basis',       // Curved edges
-                htmlLabels: true,     // Enable HTML labels for better control
-                useMaxWidth: false    // Don't constrain to container width
-            }
-        });
-        window.mermaid = mermaid;
-    </script>
+
+    <!-- Cytoscape.js for graph rendering (replaces Mermaid for visualization) -->
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+
+    <!-- fcose layout extension for intelligent compound graph layout -->
+    <!-- Minimizes edge crossings, prevents overlaps, respects groups -->
+    <script src="https://unpkg.com/layout-base/layout-base.js"></script>
+    <script src="https://unpkg.com/cose-base/cose-base.js"></script>
+    <script src="https://unpkg.com/cytoscape-fcose/cytoscape-fcose.js"></script>
+
+    <!-- dagre layout extension for hierarchical layouts (like mermaidchart.com) -->
+    <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 
     <!-- Custom Styles -->
     <link rel="stylesheet" href="css/main.css">
@@ -82,6 +67,7 @@
 
     <!-- 5. Core modules -->
     <script src="js/core/mermaid-generator.js"></script>
+    <script src="js/core/cytoscape-renderer.js"></script>
     <script src="js/core/excel-handler.js"></script>
     <script src="js/core/exports.js"></script>
 
