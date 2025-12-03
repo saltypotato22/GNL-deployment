@@ -17,6 +17,7 @@
     let cy = null;  // Cytoscape instance
     const nodePositions = new Map();  // Store positions for stability
     let currentGroupOrder = [];  // Store group order from data (for layout)
+    let currentHideLinks = false;  // Track hide links state for layout decisions
 
     /**
      * Convert nodes array to Cytoscape elements format
@@ -262,6 +263,9 @@
         if (!container) {
             throw new Error(`Container ${containerId} not found`);
         }
+
+        // Store hideLinks state for layout decisions
+        currentHideLinks = hideLinks || false;
 
         const elements = nodesToElements(nodes, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks);
 
@@ -647,6 +651,42 @@
     };
 
     /**
+     * Reposition group labels to top-left of their bounding boxes
+     * Call after any layout completes for consistent label placement
+     */
+    const repositionLabelsToTopLeft = function() {
+        if (!cy) return;
+
+        const LABEL_OFFSET = 6;  // Padding from group edge
+
+        // Get all label nodes
+        const labelNodes = cy.nodes('[?isGroupLabel]');
+
+        labelNodes.forEach(labelNode => {
+            const parentId = labelNode.data('parent');
+            const parentGroup = cy.getElementById(parentId);
+
+            if (parentGroup.length > 0) {
+                // Get bounding box of sibling nodes (excluding the label itself)
+                const siblingNodes = parentGroup.children().filter(n => !n.data('isGroupLabel'));
+                if (siblingNodes.length === 0) return;
+
+                const bbox = siblingNodes.boundingBox({ includeOverlays: false });
+
+                // Position label at top-left, accounting for label's own dimensions
+                const labelBB = labelNode.boundingBox({ includeOverlays: false });
+                const labelW = labelBB.w;
+                const labelH = labelBB.h;
+
+                labelNode.position({
+                    x: bbox.x1 + labelW / 2 + LABEL_OFFSET,
+                    y: bbox.y1 - labelH / 2 - LABEL_OFFSET  // Above the nodes
+                });
+            }
+        });
+    };
+
+    /**
      * Calculate node width from label (estimates for layout before render)
      * 10px font ~= 6px per char, plus 6px padding (3px each side) + 2px border
      */
@@ -801,6 +841,9 @@
             }
         });
 
+        // Reposition labels to top-left of each group
+        repositionLabelsToTopLeft();
+
         // Fit to screen
         cy.fit(20);
     };
@@ -816,11 +859,77 @@
     };
 
     /**
+     * Set table-order positions as initial layout
+     * Used as pre-layout for fcose/dagre to bias toward table order
+     * Groups appear top-to-bottom, nodes within groups left-to-right
+     * @param {boolean} extraSpacing - Use extra spacing when links hidden to prevent overlap
+     */
+    const setTableOrderPositions = function(extraSpacing) {
+        if (!cy) return;
+
+        const SPACING_X = extraSpacing ? 140 : 100;  // Horizontal spacing between nodes
+        const SPACING_Y = extraSpacing ? 120 : 80;   // Vertical spacing between groups
+        const GROUP_GAP = extraSpacing ? 60 : 0;     // Extra gap between groups
+
+        // Get all non-compound nodes
+        const allNodes = cy.nodes('[!isGroup]');
+
+        // Separate label nodes from regular nodes, build group mapping
+        const groupNodes = new Map();
+        const labelNodes = new Map();
+
+        allNodes.forEach(node => {
+            const parentId = node.data('parent');
+            if (node.data('isGroupLabel')) {
+                labelNodes.set(parentId, node);
+                if (!groupNodes.has(parentId)) {
+                    groupNodes.set(parentId, []);
+                }
+            } else {
+                if (!groupNodes.has(parentId)) {
+                    groupNodes.set(parentId, []);
+                }
+                groupNodes.get(parentId).push(node);
+            }
+        });
+
+        // Use stored group order for table-order positioning
+        const groupOrder = currentGroupOrder;
+
+        let currentY = 0;
+
+        groupOrder.forEach(groupId => {
+            const regularNodes = groupNodes.get(groupId) || [];
+            const labelNode = labelNodes.get(groupId);
+
+            if (!labelNode && regularNodes.length === 0) return;
+
+            let nodeX = 0;
+
+            // Position label node first (at left)
+            if (labelNode) {
+                labelNode.position({ x: nodeX, y: currentY });
+                nodeX += SPACING_X;
+            }
+
+            // Position regular nodes left-to-right (in table order)
+            regularNodes.forEach(node => {
+                node.position({ x: nodeX, y: currentY });
+                nodeX += SPACING_X;
+            });
+
+            // Move to next group (below) - add extra gap when needed
+            currentY += SPACING_Y + GROUP_GAP;
+        });
+    };
+
+    /**
      * Run Smart Layout - force-directed layout for compound graphs
-     * Uses fcose with dagre pre-layout for deterministic starting positions
+     * Uses table-order pre-layout to bias toward data array order
+     * Then fcose optimizes edges while starting from ordered positions
      *
      * fcose = organic, aesthetic, force-directed (vs dagre = hierarchical, structured)
-     * Pre-layout with dagre ensures deterministic results on each Re-layout click
+     * Pre-layout with table order ensures user's organization is respected
      *
      * @param {Object} options - Optional configuration overrides
      */
@@ -829,22 +938,13 @@
 
         nodePositions.clear();
 
-        // Pre-layout with dagre for deterministic starting positions
-        // This ensures fcose starts from the same initial state every time
-        try {
-            cy.layout({
-                name: 'dagre',
-                rankDir: 'TB',
-                nodeSep: 15,
-                rankSep: 25,
-                fit: false,
-                animate: false
-            }).run();
-        } catch (e) {
-            console.warn('Pre-layout failed:', e.message);
-        }
+        // Pre-layout with table order for deterministic, order-biased starting positions
+        // This biases fcose toward user's table organization while still allowing optimization
+        // Use extra spacing when links hidden to prevent group overlap
+        setTableOrderPositions(currentHideLinks);
 
         // Run fcose - force-directed layout for compound graphs
+        // When links hidden, disable packComponents to prevent group overlap
         const defaultOptions = {
             name: 'fcose',
             quality: 'proof',
@@ -854,18 +954,23 @@
             fit: true,
             padding: 20,
             nodeDimensionsIncludeLabels: true,
-            nodeSeparation: 50,
-            nodeRepulsion: node => 4500,
-            gravity: 0.25,
+            nodeSeparation: currentHideLinks ? 100 : 50,
+            nodeRepulsion: node => currentHideLinks ? 10000 : 4500,
+            gravity: currentHideLinks ? 0.05 : 0.25,
             gravityCompound: 1.0,
-            packComponents: true,
+            packComponents: !currentHideLinks,  // Don't pack when links hidden
             idealEdgeLength: edge => 50,
-            numIter: 2500,
+            numIter: currentHideLinks ? 500 : 2500,  // Much fewer iterations when no edges to preserve positions
+            // Compound node padding - prevents edge overlap
+            tilingPaddingVertical: currentHideLinks ? 40 : 10,
+            tilingPaddingHorizontal: currentHideLinks ? 40 : 10,
             stop: function() {
                 // Save positions after layout completes
                 cy.nodes('[!isGroup]').forEach(node => {
                     nodePositions.set(node.id(), { ...node.position() });
                 });
+                // Reposition labels to top-left of each group
+                repositionLabelsToTopLeft();
             }
         };
 
@@ -882,6 +987,7 @@
 
     /**
      * Run dagre layout - tight hierarchical layout for DAGs/trees
+     * Uses table-order pre-layout to bias within-rank ordering
      * Mimics mermaidchart.com style with minimal spacing
      * @param {String} direction - 'TB' (top-bottom) or 'LR' (left-right)
      * @param {Object} options - Optional configuration overrides
@@ -897,14 +1003,18 @@
 
         nodePositions.clear();
 
+        // Pre-layout with table order to bias dagre's within-rank ordering
+        // Use extra spacing when links hidden to prevent group overlap
+        setTableOrderPositions(currentHideLinks);
+
         const defaultOptions = {
             name: 'dagre',
             rankDir: direction || 'TB',
 
-            // TIGHT SPACING - like mermaidchart.com
-            nodeSep: 15,          // Horizontal gap between nodes in same rank (default 50)
-            rankSep: 25,          // Vertical gap between ranks/levels (default 50)
-            edgeSep: 10,          // Gap between edges
+            // Spacing - wider when links hidden to prevent overlap
+            nodeSep: currentHideLinks ? 40 : 15,   // Horizontal gap between nodes
+            rankSep: currentHideLinks ? 60 : 25,   // Vertical gap between ranks
+            edgeSep: 10,                            // Gap between edges
 
             ranker: 'network-simplex',  // Best balance of speed and quality
 
@@ -921,6 +1031,8 @@
                 cy.nodes('[!isGroup]').forEach(node => {
                     nodePositions.set(node.id(), { ...node.position() });
                 });
+                // Reposition labels to top-left of each group
+                repositionLabelsToTopLeft();
             }
         };
 

@@ -243,6 +243,34 @@
         ], props);
     };
 
+    // ArrowUp icon (for move row up)
+    const ArrowUp = function(props) {
+        return createIcon([
+            React.createElement('line', {
+                key: 'line',
+                x1: '12', y1: '19', x2: '12', y2: '5'
+            }),
+            React.createElement('polyline', {
+                key: 'arrow',
+                points: '5 12 12 5 19 12'
+            })
+        ], props);
+    };
+
+    // ArrowDown icon (for move row down)
+    const ArrowDown = function(props) {
+        return createIcon([
+            React.createElement('line', {
+                key: 'line',
+                x1: '12', y1: '5', x2: '12', y2: '19'
+            }),
+            React.createElement('polyline', {
+                key: 'arrow',
+                points: '19 12 12 19 5 12'
+            })
+        ], props);
+    };
+
     // ChevronDown icon
     const ChevronDown = function(props) {
         return createIcon([
@@ -464,6 +492,8 @@
         Image,
         File,
         FileText,
+        ArrowUp,
+        ArrowDown,
         ChevronDown,
         ChevronRight,
         Maximize2,

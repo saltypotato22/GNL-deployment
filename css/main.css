@@ -33,6 +33,22 @@ input[type="number"] {
     cursor: pointer;
 }
 
+/* Partial-height column separator */
+.th-separator {
+    position: relative;
+}
+
+.th-separator::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 60%;
+    width: 1px;
+    background-color: #d1d5db; /* gray-300 */
+}
+
 /* Graph node styles */
 .graph-node {
     transition: opacity 0.2s;

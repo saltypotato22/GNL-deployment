@@ -329,7 +329,7 @@
 
         const PADDING = 20; // Input padding + cell padding + buffer
         const BORDER = 2; // 1px left + 1px right
-        const BUTTON_CLUSTER = 40; // Space for clear/link buttons (36px) + small gap in Linked To column
+        const BUTTON_CLUSTER = 22; // Space for single button (clear X or cancel X) + gap in Linked To column
 
         // Headers to measure
         const headers = {

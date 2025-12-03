@@ -564,6 +564,511 @@
         URL.revokeObjectURL(url);
     };
 
+    // =========================================
+    // EXCALIDRAW EXPORT
+    // =========================================
+
+    /**
+     * Generate random ID for Excalidraw elements
+     * @returns {String} Random 8-character ID
+     */
+    const generateExcalidrawId = function() {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let result = '';
+        for (let i = 0; i < 8; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+    };
+
+    /**
+     * Generate random seed for Excalidraw roughness
+     * @returns {Number} Random seed integer
+     */
+    const generateSeed = function() {
+        return Math.floor(Math.random() * 2147483647);
+    };
+
+    /**
+     * Create base Excalidraw element with common properties
+     * @param {String} type - Element type
+     * @param {Number} x - X position
+     * @param {Number} y - Y position
+     * @param {Number} width - Width
+     * @param {Number} height - Height
+     * @returns {Object} Base element object
+     */
+    const createBaseElement = function(type, x, y, width, height) {
+        return {
+            id: generateExcalidrawId(),
+            type: type,
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            angle: 0,
+            strokeColor: '#1e1e1e',
+            backgroundColor: 'transparent',
+            fillStyle: 'solid',
+            strokeWidth: 2,
+            strokeStyle: 'solid',
+            roughness: 1,
+            opacity: 100,
+            seed: generateSeed(),
+            version: 1,
+            versionNonce: generateSeed(),
+            isDeleted: false,
+            groupIds: [],
+            frameId: null,
+            boundElements: [],
+            updated: Date.now(),
+            link: null,
+            locked: false
+        };
+    };
+
+    /**
+     * Create Excalidraw rectangle element
+     * @param {String} id - Element ID
+     * @param {Number} x - X position
+     * @param {Number} y - Y position
+     * @param {Number} width - Width
+     * @param {Number} height - Height
+     * @param {String} frameId - Parent frame ID (optional)
+     * @returns {Object} Rectangle element
+     */
+    const createExcalidrawRectangle = function(id, x, y, width, height, frameId) {
+        const rect = createBaseElement('rectangle', x, y, width, height);
+        rect.id = id;
+        rect.roundness = { type: 3 };  // Rounded corners
+        rect.backgroundColor = '#ffffff';
+        if (frameId) {
+            rect.frameId = frameId;
+        }
+        return rect;
+    };
+
+    /**
+     * Create Excalidraw text element
+     * @param {String} id - Element ID
+     * @param {String} text - Text content
+     * @param {Number} x - X position
+     * @param {Number} y - Y position
+     * @param {Number} width - Width
+     * @param {Number} height - Height
+     * @param {String} containerId - Parent container ID (for bound text)
+     * @returns {Object} Text element
+     */
+    const createExcalidrawText = function(id, text, x, y, width, height, containerId) {
+        const textEl = createBaseElement('text', x, y, width, height);
+        textEl.id = id;
+        textEl.text = text;
+        textEl.fontSize = 16;
+        textEl.fontFamily = 1;  // Hand-drawn style
+        textEl.textAlign = 'center';
+        textEl.verticalAlign = 'middle';
+        textEl.baseline = 0;
+        textEl.strokeWidth = 1;
+        textEl.backgroundColor = 'transparent';
+        if (containerId) {
+            textEl.containerId = containerId;
+        }
+        return textEl;
+    };
+
+    /**
+     * Create Excalidraw arrow element
+     * @param {String} id - Element ID
+     * @param {Object} startPos - Start position {x, y}
+     * @param {Object} endPos - End position {x, y}
+     * @param {String} label - Arrow label
+     * @param {String} arrowType - 'To', 'From', 'Both', or 'None'
+     * @param {Object} startBinding - Start binding info {elementId, focus, gap}
+     * @param {Object} endBinding - End binding info {elementId, focus, gap}
+     * @returns {Object} Arrow element
+     */
+    const createExcalidrawArrow = function(id, startPos, endPos, label, arrowType, startBinding, endBinding) {
+        const arrow = createBaseElement('arrow', startPos.x, startPos.y, 0, 0);
+        arrow.id = id;
+
+        // Calculate relative points
+        arrow.points = [
+            [0, 0],
+            [endPos.x - startPos.x, endPos.y - startPos.y]
+        ];
+
+        // Set arrow heads based on type
+        switch (arrowType) {
+            case 'To':
+                arrow.startArrowhead = null;
+                arrow.endArrowhead = 'arrow';
+                break;
+            case 'From':
+                arrow.startArrowhead = 'arrow';
+                arrow.endArrowhead = null;
+                break;
+            case 'Both':
+                arrow.startArrowhead = 'arrow';
+                arrow.endArrowhead = 'arrow';
+                break;
+            case 'None':
+            default:
+                arrow.startArrowhead = null;
+                arrow.endArrowhead = null;
+                break;
+        }
+
+        // Add bindings
+        arrow.startBinding = startBinding;
+        arrow.endBinding = endBinding;
+
+        // Round corners for smoother arrows
+        arrow.roundness = { type: 2 };
+
+        return { arrow, label };
+    };
+
+    /**
+     * Create Excalidraw frame element
+     * @param {String} id - Element ID
+     * @param {String} name - Frame name
+     * @param {Number} x - X position
+     * @param {Number} y - Y position
+     * @param {Number} width - Width
+     * @param {Number} height - Height
+     * @returns {Object} Frame element
+     */
+    const createExcalidrawFrame = function(id, name, x, y, width, height) {
+        const frame = createBaseElement('frame', x, y, width, height);
+        frame.id = id;
+        frame.name = name;
+        frame.strokeColor = '#bbb';
+        frame.backgroundColor = 'transparent';
+        frame.strokeWidth = 1;
+        frame.strokeStyle = 'solid';
+        // Frames don't need roughness
+        delete frame.roughness;
+        delete frame.fillStyle;
+        return frame;
+    };
+
+    /**
+     * Check if two frames overlap (with gap)
+     * Returns true if frames are closer than the required gap
+     * @param {Object} f1 - First frame {x, y, width, height}
+     * @param {Object} f2 - Second frame {x, y, width, height}
+     * @param {Number} gap - Minimum gap between frames
+     * @returns {Boolean} True if frames overlap or are too close
+     */
+    const framesOverlap = function(f1, f2, gap) {
+        // Check if frames are separated by at least 'gap' pixels
+        const separatedX = (f1.x + f1.width + gap <= f2.x) || (f2.x + f2.width + gap <= f1.x);
+        const separatedY = (f1.y + f1.height + gap <= f2.y) || (f2.y + f2.height + gap <= f1.y);
+        // If separated on either axis, no overlap
+        return !(separatedX || separatedY);
+    };
+
+    /**
+     * Fix overlapping frames by shifting them apart
+     * Uses a simple greedy algorithm: for each overlapping pair, shift the second frame
+     * @param {Array} frameDataList - Array of frame data objects
+     * @param {Array} elements - All Excalidraw elements
+     * @param {Map} rectIdToNodeId - Map of rectangle IDs to node IDs
+     */
+    const fixOverlappingFrames = function(frameDataList, elements, rectIdToNodeId) {
+        const FRAME_GAP = 30;  // Minimum gap between frames (increased for visibility)
+        const MAX_ITERATIONS = 50;  // Prevent infinite loops
+
+        // Sort frames by position (top-left to bottom-right)
+        frameDataList.sort((a, b) => {
+            const aScore = a.y * 10000 + a.x;
+            const bScore = b.y * 10000 + b.x;
+            return aScore - bScore;
+        });
+
+        let iterations = 0;
+        let changed = true;
+
+        while (changed && iterations < MAX_ITERATIONS) {
+            changed = false;
+            iterations++;
+
+            for (let i = 0; i < frameDataList.length; i++) {
+                for (let j = i + 1; j < frameDataList.length; j++) {
+                    const f1 = frameDataList[i];
+                    const f2 = frameDataList[j];
+
+                    if (framesOverlap(f1, f2, FRAME_GAP)) {
+                        // Calculate how much we need to shift f2 to clear f1
+                        // Check both directions and choose the minimum shift
+                        const shiftRightX = (f1.x + f1.width + FRAME_GAP) - f2.x;
+                        const shiftDownY = (f1.y + f1.height + FRAME_GAP) - f2.y;
+
+                        // Only shift if positive (f2 needs to move right/down)
+                        let shiftX = 0, shiftY = 0;
+
+                        // Prefer the smaller shift, but must be positive
+                        if (shiftRightX > 0 && shiftDownY > 0) {
+                            // Both directions need shift, choose smaller
+                            if (shiftRightX <= shiftDownY) {
+                                shiftX = shiftRightX;
+                            } else {
+                                shiftY = shiftDownY;
+                            }
+                        } else if (shiftRightX > 0) {
+                            shiftX = shiftRightX;
+                        } else if (shiftDownY > 0) {
+                            shiftY = shiftDownY;
+                        }
+
+                        if (shiftX > 0 || shiftY > 0) {
+                            // Update frame data (for future overlap checks)
+                            f2.x += shiftX;
+                            f2.y += shiftY;
+
+                            // Find and update the frame element in elements array
+                            const frameEl = elements.find(el => el.id === f2.frameId);
+                            if (frameEl) {
+                                frameEl.x += shiftX;
+                                frameEl.y += shiftY;
+                            }
+
+                            // Update all child elements (rectangles and texts)
+                            f2.childIds.forEach(childId => {
+                                const childEl = elements.find(el => el.id === childId);
+                                if (childEl) {
+                                    childEl.x += shiftX;
+                                    childEl.y += shiftY;
+                                }
+                            });
+
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return frameDataList;
+    };
+
+    /**
+     * Export nodes to Excalidraw format
+     * @param {Array} nodes - Array of node objects
+     * @param {String} filename - Output filename
+     */
+    const exportExcalidraw = function(nodes, filename) {
+        const cy = window.GraphApp.core.getCytoscapeInstance();
+        if (!cy) {
+            console.error('No graph to export');
+            return;
+        }
+
+        const elements = [];
+        const nodeIdToExcalidrawId = new Map();  // Slim Graph ID -> Excalidraw rect ID
+        const groupIdToFrameId = new Map();      // Group name -> Frame ID
+        const frameDataList = [];                 // Track frame positions for overlap detection
+        const rectIdToNodeId = new Map();        // Excalidraw rect ID -> Slim Graph node ID
+
+        // Frame padding constants
+        const FRAME_PADDING = 30;
+        const NODE_HEIGHT = 40;
+        const CHAR_WIDTH = 9;  // Approximate character width for 16px font
+
+        // Step 1: Group nodes by their parent group
+        const groupedNodes = new Map();
+        cy.nodes('[!isGroup][!isGroupLabel]').forEach(cyNode => {
+            const parentId = cyNode.data('parent');
+            const groupName = parentId ? parentId.replace('group_', '') : 'Ungrouped';
+            if (!groupedNodes.has(groupName)) {
+                groupedNodes.set(groupName, []);
+            }
+            groupedNodes.get(groupName).push(cyNode);
+        });
+
+        // Step 2: Create frames for each group and position nodes
+        groupedNodes.forEach((cyNodes, groupName) => {
+            if (cyNodes.length === 0) return;
+
+            // Calculate bounding box for this group
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            cyNodes.forEach(cyNode => {
+                const bb = cyNode.boundingBox({ includeOverlays: false });
+                minX = Math.min(minX, bb.x1);
+                minY = Math.min(minY, bb.y1);
+                maxX = Math.max(maxX, bb.x2);
+                maxY = Math.max(maxY, bb.y2);
+            });
+
+            // Create frame
+            const frameId = generateExcalidrawId();
+            groupIdToFrameId.set(groupName, frameId);
+            const frameX = minX - FRAME_PADDING;
+            const frameY = minY - FRAME_PADDING - 25;  // Extra space for frame label
+            const frameWidth = (maxX - minX) + FRAME_PADDING * 2;
+            const frameHeight = (maxY - minY) + FRAME_PADDING * 2 + 25;
+
+            const frame = createExcalidrawFrame(frameId, groupName, frameX, frameY, frameWidth, frameHeight);
+            elements.push(frame);
+
+            // Track frame data for overlap detection
+            const childIds = [];
+
+            // Create rectangles for each node in this group
+            cyNodes.forEach(cyNode => {
+                const nodeId = cyNode.id();
+                const label = cyNode.data('label') || '';
+                const pos = cyNode.position();
+
+                const rectWidth = Math.max(60, label.length * CHAR_WIDTH + 20);
+                const rectHeight = NODE_HEIGHT;
+                const rectX = pos.x - rectWidth / 2;
+                const rectY = pos.y - rectHeight / 2;
+
+                // Create rectangle
+                const rectId = generateExcalidrawId();
+                nodeIdToExcalidrawId.set(nodeId, rectId);
+                rectIdToNodeId.set(rectId, nodeId);
+
+                const rect = createExcalidrawRectangle(rectId, rectX, rectY, rectWidth, rectHeight, frameId);
+
+                // Create text inside rectangle
+                const textId = generateExcalidrawId();
+                const text = createExcalidrawText(textId, label, rectX, rectY, rectWidth, rectHeight, rectId);
+
+                // Link text to rectangle
+                rect.boundElements = [{ id: textId, type: 'text' }];
+
+                elements.push(rect);
+                elements.push(text);
+
+                // Track child IDs for frame shifting
+                childIds.push(rectId);
+                childIds.push(textId);
+            });
+
+            // Store frame data for overlap detection
+            frameDataList.push({
+                frameId: frameId,
+                groupName: groupName,
+                x: frameX,
+                y: frameY,
+                width: frameWidth,
+                height: frameHeight,
+                childIds: childIds
+            });
+        });
+
+        // Step 3: Fix overlapping frames
+        fixOverlappingFrames(frameDataList, elements, rectIdToNodeId);
+
+        // Step 4: Create arrows for edges (after frame positions are finalized)
+        cy.edges().forEach(cyEdge => {
+            const sourceId = cyEdge.source().id();
+            const targetId = cyEdge.target().id();
+            const label = cyEdge.data('label') || '';
+            const arrowType = cyEdge.data('arrow') || 'To';
+
+            const sourceRectId = nodeIdToExcalidrawId.get(sourceId);
+            const targetRectId = nodeIdToExcalidrawId.get(targetId);
+
+            if (!sourceRectId || !targetRectId) return;
+
+            // Get positions from the actual rectangle elements (after potential shifting)
+            const sourceRect = elements.find(el => el.id === sourceRectId);
+            const targetRect = elements.find(el => el.id === targetRectId);
+
+            if (!sourceRect || !targetRect) return;
+
+            // Calculate center positions of rectangles
+            const sourcePos = {
+                x: sourceRect.x + sourceRect.width / 2,
+                y: sourceRect.y + sourceRect.height / 2
+            };
+            const targetPos = {
+                x: targetRect.x + targetRect.width / 2,
+                y: targetRect.y + targetRect.height / 2
+            };
+
+            // Create arrow with bindings
+            const arrowId = generateExcalidrawId();
+            const { arrow } = createExcalidrawArrow(
+                arrowId,
+                sourcePos,
+                targetPos,
+                label,
+                arrowType,
+                { elementId: sourceRectId, focus: 0, gap: 5 },
+                { elementId: targetRectId, focus: 0, gap: 5 }
+            );
+
+            // Add arrow as bound element to source and target rectangles
+            if (sourceRect) {
+                sourceRect.boundElements = sourceRect.boundElements || [];
+                sourceRect.boundElements.push({ id: arrowId, type: 'arrow' });
+            }
+            if (targetRect) {
+                targetRect.boundElements = targetRect.boundElements || [];
+                targetRect.boundElements.push({ id: arrowId, type: 'arrow' });
+            }
+
+            elements.push(arrow);
+
+            // Add label as text element if present
+            if (label) {
+                const midX = (sourcePos.x + targetPos.x) / 2;
+                const midY = (sourcePos.y + targetPos.y) / 2;
+                const labelWidth = label.length * CHAR_WIDTH + 10;
+                const labelText = createExcalidrawText(
+                    generateExcalidrawId(),
+                    label,
+                    midX - labelWidth / 2,
+                    midY - 10,
+                    labelWidth,
+                    20,
+                    null
+                );
+                labelText.fontSize = 14;
+                elements.push(labelText);
+            }
+        });
+
+        // Build final Excalidraw document
+        const excalidrawData = {
+            type: 'excalidraw',
+            version: 2,
+            source: window.location.origin || 'https://slimgraph.app',
+            elements: elements,
+            appState: {
+                gridSize: 20,
+                viewBackgroundColor: '#ffffff'
+            },
+            files: {}
+        };
+
+        // Download as .excalidraw file
+        const blob = new Blob([JSON.stringify(excalidrawData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'diagram.excalidraw';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    /**
+     * Export visible nodes to Excalidraw (canvas-filtered)
+     * @param {Array} nodes - Array of node objects
+     * @param {String} filename - Output filename
+     */
+    const exportExcalidrawCanvas = function(nodes, filename) {
+        // The Excalidraw export already uses Cytoscape canvas state
+        // This is included for API consistency
+        exportExcalidraw(nodes, filename || 'diagram-canvas.excalidraw');
+    };
+
     /**
      * Export diagram as PDF using Cytoscape
      * @param {String} containerId - ID of container (kept for API compatibility)
@@ -677,11 +1182,13 @@
         exportJSON,
         exportGraphML,
         exportDOT,
+        exportExcalidraw,
         // Canvas exports (visible only)
         exportCSVCanvas,
         exportJSONCanvas,
         exportGraphMLCanvas,
         exportDOTCanvas,
+        exportExcalidrawCanvas,
         filterVisibleNodes,
         // Image exports (always from canvas)
         exportPNG,

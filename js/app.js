@@ -11,7 +11,7 @@
         const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
         // Get icons from namespace
-        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
+        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
 
         // State Management - Load sample data by default
         const [nodes, setNodes] = useState(() => window.GraphApp.data.sample || []);
@@ -45,6 +45,7 @@
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
         const [showDemoMenu, setShowDemoMenu] = useState(false);
+        const [selectedRowIndex, setSelectedRowIndex] = useState(null);
         const [currentFileName, setCurrentFileName] = useState('');
         const [colWidths, setColWidths] = useState({
             Group_xA: 60,
@@ -211,6 +212,129 @@
             setCanUndo(historyRef.current.canUndo());
             setCanRedo(historyRef.current.canRedo());
         }, []);
+
+        // Helper: Find group boundaries (first and last index of a group in nodes array)
+        const getGroupBounds = useCallback((groupName) => {
+            let start = -1, end = -1;
+            nodes.forEach((node, i) => {
+                if (node.Group_xA === groupName) {
+                    if (start === -1) start = i;
+                    end = i;
+                }
+            });
+            return { start, end };
+        }, [nodes]);
+
+        // Move row up handler
+        const handleMoveUp = useCallback(() => {
+            if (selectedRowIndex === null || selectedRowIndex <= 0) return;
+
+            const currentNode = nodes[selectedRowIndex];
+            const isCollapsed = collapsedGroups.has(currentNode.Group_xA);
+
+            if (isCollapsed) {
+                // Move entire group up
+                const groupName = currentNode.Group_xA;
+                const { start, end } = getGroupBounds(groupName);
+                if (start === 0) return; // Already at top
+
+                // Find previous group's start
+                const prevGroupName = nodes[start - 1].Group_xA;
+                const prevBounds = getGroupBounds(prevGroupName);
+
+                // Swap group blocks
+                const newNodes = [...nodes];
+                const currentGroup = newNodes.splice(start, end - start + 1);
+                newNodes.splice(prevBounds.start, 0, ...currentGroup);
+
+                setNodes(newNodes);
+                saveToHistory(newNodes);
+                setSelectedRowIndex(prevBounds.start); // Update selection to new position
+            } else {
+                // Move single node within group
+                const { start } = getGroupBounds(currentNode.Group_xA);
+                if (selectedRowIndex === start) return; // At top of group
+
+                const newNodes = [...nodes];
+                [newNodes[selectedRowIndex - 1], newNodes[selectedRowIndex]] =
+                    [newNodes[selectedRowIndex], newNodes[selectedRowIndex - 1]];
+
+                setNodes(newNodes);
+                saveToHistory(newNodes);
+                setSelectedRowIndex(selectedRowIndex - 1);
+            }
+        }, [selectedRowIndex, nodes, collapsedGroups, getGroupBounds, saveToHistory]);
+
+        // Move row down handler
+        const handleMoveDown = useCallback(() => {
+            if (selectedRowIndex === null || selectedRowIndex >= nodes.length - 1) return;
+
+            const currentNode = nodes[selectedRowIndex];
+            const isCollapsed = collapsedGroups.has(currentNode.Group_xA);
+
+            if (isCollapsed) {
+                // Move entire group down
+                const groupName = currentNode.Group_xA;
+                const { start, end } = getGroupBounds(groupName);
+                if (end === nodes.length - 1) return; // Already at bottom
+
+                // Find next group's end
+                const nextGroupName = nodes[end + 1].Group_xA;
+                const nextBounds = getGroupBounds(nextGroupName);
+
+                // Swap group blocks
+                const newNodes = [...nodes];
+                const nextGroup = newNodes.splice(nextBounds.start, nextBounds.end - nextBounds.start + 1);
+                newNodes.splice(start, 0, ...nextGroup);
+
+                setNodes(newNodes);
+                saveToHistory(newNodes);
+                setSelectedRowIndex(start + nextGroup.length); // Update selection
+            } else {
+                // Move single node within group
+                const { end } = getGroupBounds(currentNode.Group_xA);
+                if (selectedRowIndex === end) return; // At bottom of group
+
+                const newNodes = [...nodes];
+                [newNodes[selectedRowIndex], newNodes[selectedRowIndex + 1]] =
+                    [newNodes[selectedRowIndex + 1], newNodes[selectedRowIndex]];
+
+                setNodes(newNodes);
+                saveToHistory(newNodes);
+                setSelectedRowIndex(selectedRowIndex + 1);
+            }
+        }, [selectedRowIndex, nodes, collapsedGroups, getGroupBounds, saveToHistory]);
+
+        // Compute disabled states for move buttons
+        const canMoveUp = useMemo(() => {
+            if (selectedRowIndex === null || selectedRowIndex <= 0) return false;
+            const currentNode = nodes[selectedRowIndex];
+            if (!currentNode) return false;
+            const isCollapsed = collapsedGroups.has(currentNode.Group_xA);
+
+            if (isCollapsed) {
+                const { start } = getGroupBounds(currentNode.Group_xA);
+                return start > 0;
+            } else {
+                const { start } = getGroupBounds(currentNode.Group_xA);
+                return selectedRowIndex > start;
+            }
+        }, [selectedRowIndex, nodes, collapsedGroups, getGroupBounds]);
+
+        const canMoveDown = useMemo(() => {
+            if (selectedRowIndex === null || selectedRowIndex >= nodes.length - 1) return false;
+            const currentNode = nodes[selectedRowIndex];
+            if (!currentNode) return false;
+            const isCollapsed = collapsedGroups.has(currentNode.Group_xA);
+
+            if (isCollapsed) {
+                const { end } = getGroupBounds(currentNode.Group_xA);
+                return end < nodes.length - 1;
+            } else {
+                const { end } = getGroupBounds(currentNode.Group_xA);
+                return selectedRowIndex < end;
+            }
+        }, [selectedRowIndex, nodes, collapsedGroups, getGroupBounds]);
 
         // Undo function
         const handleUndo = useCallback(() => {
@@ -429,7 +553,7 @@
         // Calculate optimal table width to fit all content without truncation
         const calculateOptimalTableWidth = useCallback(() => {
             // Sum fixed icon column widths (px)
-            const fixedColumnsWidth = 40 + 32 + 32 + 36 + 32 + 32; // Row#, Collapse, Visibility, Links, Duplicate, Delete
+            const fixedColumnsWidth = 30 + 32 + 32 + 28 + 32 + 32; // Row#, Collapse, Visibility, Links, Duplicate, Delete
 
             // Use ref to get latest colWidths (avoids stale closure)
             const currentColWidths = colWidthsRef.current;
@@ -785,11 +909,14 @@
                         newNodes[i].ID_xA = window.GraphApp.utils.generateID(newGroupName, node.Node_xA);
 
                         // Update all references to this old ID
-                        newNodes.forEach((refNode, j) => {
-                            if (refNode.Linked_Node_ID_xA === oldID) {
-                                newNodes[j].Linked_Node_ID_xA = newNodes[i].ID_xA;
-                            }
-                        });
+                        // IMPORTANT: Only track non-empty IDs - prevents empty Linked_To cells from snapping
+                        if (oldID && newNodes[i].ID_xA) {
+                            newNodes.forEach((refNode, j) => {
+                                if (refNode.Linked_Node_ID_xA === oldID) {
+                                    newNodes[j].Linked_Node_ID_xA = newNodes[i].ID_xA;
+                                }
+                            });
+                        }
                     }
                 });
 
@@ -812,7 +939,8 @@
                     newNodes[index].ID_xA = newID;
 
                     // Excel-style reference tracking: update all references to old ID
-                    if (oldID !== newID) {
+                    // IMPORTANT: Only track non-empty IDs - prevents empty Linked_To cells from snapping
+                    if (oldID && newID && oldID !== newID) {
                         newNodes.forEach((node, i) => {
                             if (node.Linked_Node_ID_xA === oldID) {
                                 newNodes[i].Linked_Node_ID_xA = newID;
@@ -993,6 +1121,11 @@
             }
         }, []);
 
+        const handleExportExcalidraw = useCallback(() => {
+            window.GraphApp.exports.exportExcalidraw(nodes, 'graph.excalidraw');
+            setShowExportModal(false);
+        }, [nodes]);
+
         // Canvas export handlers (visible nodes only)
         const handleExportCSVCanvas = useCallback(() => {
             window.GraphApp.exports.exportCSVCanvas(nodes, 'graph-canvas.csv');
@@ -1026,6 +1159,11 @@
             window.GraphApp.exports.exportDOTCanvas(nodes, 'graph-canvas.dot', settings);
             setShowExportModal(false);
         }, [nodes, settings]);
+
+        const handleExportExcalidrawCanvas = useCallback(() => {
+            window.GraphApp.exports.exportExcalidrawCanvas(nodes, 'graph-canvas.excalidraw');
+            setShowExportModal(false);
+        }, [nodes]);
 
         // Load demo by name
         const loadDemo = useCallback((demoName) => {
@@ -1174,6 +1312,30 @@
                                 }, demoName)
                             ))
                         ]),
+
+                        // Move row up/down buttons
+                        React.createElement('div', {
+                            key: 'div-move',
+                            className: "w-px h-6 bg-gray-300"
+                        }),
+                        React.createElement('button', {
+                            key: 'move-up',
+                            onClick: handleMoveUp,
+                            disabled: !canMoveUp,
+                            className: canMoveUp
+                                ? "p-1.5 rounded hover:bg-gray-100"
+                                : "p-1.5 rounded text-gray-300 cursor-not-allowed",
+                            title: "Move row up (within group)"
+                        }, React.createElement(ArrowUp, { size: 16 })),
+                        React.createElement('button', {
+                            key: 'move-down',
+                            onClick: handleMoveDown,
+                            disabled: !canMoveDown,
+                            className: canMoveDown
+                                ? "p-1.5 rounded hover:bg-gray-100"
+                                : "p-1.5 rounded text-gray-300 cursor-not-allowed",
+                            title: "Move row down (within group)"
+                        }, React.createElement(ArrowDown, { size: 16 })),
 
                         React.createElement('div', {
                             key: 'div3',
@@ -1417,7 +1579,7 @@
                     }, [
                         // Column widths
                         React.createElement('colgroup', { key: 'colgroup' }, [
-                            React.createElement('col', { key: 'col-rownum', style: { width: '40px' } }), // Row number (3 digits max)
+                            React.createElement('col', { key: 'col-rownum', style: { width: '30px' } }), // Row number
                             React.createElement('col', { key: 'col-collapse', style: { width: '32px' } }), // Collapse icon
                             React.createElement('col', { key: 'col-visibility', style: { width: '32px' } }), // Visibility icon
                             React.createElement('col', {
@@ -1428,7 +1590,7 @@
                                 key: 'col-node',
                                 style: { width: `${colWidths.Node_xA}px` }
                             }),
-                            React.createElement('col', { key: 'col-links', style: { width: '36px' } }), // Incoming links count (2 digits max)
+                            React.createElement('col', { key: 'col-links', style: { width: '28px' } }), // Incoming links count
                             ...(showIDColumn ? [
                                 React.createElement('col', {
                                     key: 'col-id',
@@ -1453,70 +1615,88 @@
                             React.createElement('tr', { key: 'tr' }, [
                                 React.createElement('th', {
                                     key: 'rownum',
-                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-500",
+                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-500 th-separator",
                                     style: { width: '30px' },
                                     title: "Row number (for reference)"
                                 }, "#"),
                                 React.createElement('th', {
                                     key: 'collapse',
-                                    className: "px-2 py-2 text-xs font-semibold text-center cursor-pointer hover:bg-gray-100",
-                                    title: "Click to Collapse/Expand All Groups",
+                                    className: "px-1 py-2 text-center th-separator"
+                                }, React.createElement('button', {
                                     onClick: () => {
-                                        // Toggle between collapse all and expand all
                                         if (collapsedGroups.size === 0) {
                                             collapseAllGroups();
                                         } else {
                                             expandAllGroups();
                                         }
-                                    }
-                                }, React.createElement(ChevronDown, { size: 14 })),
+                                    },
+                                    className: "p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    title: "Collapse/Expand All Groups"
+                                }, React.createElement(ChevronDown, { size: 16, strokeWidth: 2.5 }))),
                                 React.createElement('th', {
                                     key: 'visibility',
-                                    className: "px-2 py-2 text-xs font-semibold text-center cursor-pointer hover:bg-gray-100",
-                                    title: "Click to Show/Hide All Groups",
+                                    className: "px-1 py-2 text-center th-separator"
+                                }, React.createElement('button', {
                                     onClick: () => {
-                                        // Toggle between hide all and show all
                                         if (hiddenGroups.size === 0) {
                                             hideAllGroups();
                                         } else {
                                             showAllGroups();
                                         }
-                                    }
-                                }, React.createElement(Eye, { size: 14 })),
+                                    },
+                                    className: "p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    title: "Show/Hide All Groups"
+                                }, React.createElement(Eye, { size: 16, strokeWidth: 2 }))),
                                 React.createElement('th', {
                                     key: 'group',
+                                    className: "px-1 py-2 th-separator"
+                                }, React.createElement('button', {
                                     onClick: () => handleSort('Group_xA'),
-                                    className: "px-1 py-2 text-xs font-semibold text-left sortable-header"
+                                    className: "px-2 py-1 text-xs font-semibold bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    title: "Click to sort"
                                 }, [
                                     'Group ',
-                                    sortColumn === 'Group_xA' && (sortDirection === 'asc' ? '▲' : '▼')
-                                ]),
+                                    React.createElement('span', {
+                                        key: 'sort-indicator',
+                                        className: sortColumn === 'Group_xA' ? 'text-white' : 'text-blue-200'
+                                    }, sortColumn === 'Group_xA'
+                                        ? (sortDirection === 'asc' ? '▲' : '▼')
+                                        : '↕')
+                                ])),
                                 React.createElement('th', {
                                     key: 'node',
+                                    className: "px-1 py-2 th-separator"
+                                }, React.createElement('button', {
                                     onClick: () => handleSort('Node_xA'),
-                                    className: "px-1 py-2 text-xs font-semibold text-left sortable-header"
+                                    className: "px-2 py-1 text-xs font-semibold bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    title: "Click to sort"
                                 }, [
                                     'Node ',
-                                    sortColumn === 'Node_xA' && (sortDirection === 'asc' ? '▲' : '▼')
-                                ]),
+                                    React.createElement('span', {
+                                        key: 'sort-indicator',
+                                        className: sortColumn === 'Node_xA' ? 'text-white' : 'text-blue-200'
+                                    }, sortColumn === 'Node_xA'
+                                        ? (sortDirection === 'asc' ? '▲' : '▼')
+                                        : '↕')
+                                ])),
                                 React.createElement('th', {
                                     key: 'links',
-                                    className: "px-1 py-2 text-xs font-semibold text-center",
+                                    className: "px-1 py-2 text-xs font-semibold text-center th-separator",
                                     title: "Number of incoming links to this node"
                                 }, "→"),
                                 ...(showIDColumn ? [
                                     React.createElement('th', {
                                         key: 'id',
-                                        className: "px-1 py-2 text-xs font-semibold text-left"
+                                        className: "px-1 py-2 text-xs font-semibold text-left th-separator"
                                     }, "ID")
                                 ] : []),
                                 React.createElement('th', {
                                     key: 'linked',
-                                    className: "px-1 py-2 text-xs font-semibold text-left"
+                                    className: "px-1 py-2 text-xs font-semibold text-left th-separator"
                                 }, "Linked To"),
                                 React.createElement('th', {
                                     key: 'label',
-                                    className: "px-1 py-2 text-xs font-semibold text-left"
+                                    className: "px-1 py-2 text-xs font-semibold text-left th-separator"
                                 }, "Label"),
                                 React.createElement('th', {
                                     key: 'duplicate',
@@ -1582,6 +1762,7 @@
                                         type: 'text',
                                         value: node.Group_xA,
                                         onChange: (e) => handleCellEdit(index, 'Group_xA', e.target.value),
+                                        onFocus: () => setSelectedRowIndex(index),
                                         title: isCollapsed ? `Editing this will rename all nodes in group "${node.Group_xA}"` : node.Group_xA,
                                         className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : (isFirstOfCluster ? 'font-bold border-gray-300' : 'border-gray-300')}`
                                     })),
@@ -1594,6 +1775,7 @@
                                         type: 'text',
                                         value: node.Node_xA,
                                         onChange: (e) => handleCellEdit(index, 'Node_xA', e.target.value),
+                                        onFocus: () => setSelectedRowIndex(index),
                                         title: node.Node_xA,
                                         className: `px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 text-blue-700 font-semibold' : ''}`,
                                         readOnly: linkingMode.active
@@ -1620,11 +1802,13 @@
                                         React.createElement('input', {
                                             key: 'input',
                                             type: 'text',
-                                            value: node.Linked_Node_ID_xA,
-                                            onChange: (e) => handleCellEdit(index, 'Linked_Node_ID_xA', e.target.value),
-                                            title: node.Linked_Node_ID_xA,
-                                            className: "flex-1 px-1 py-0.5 text-xs border border-gray-300 rounded table-input",
-                                            disabled: linkingMode.active && linkingMode.targetRowIndex === index
+                                            value: node.Linked_Node_ID_xA || '',
+                                            readOnly: true,
+                                            onClick: () => !(linkingMode.active && linkingMode.targetRowIndex === index) && enterLinkMode(index),
+                                            title: linkingMode.active && linkingMode.targetRowIndex === index
+                                                ? 'Click an ID to link, or X to cancel'
+                                                : (node.Linked_Node_ID_xA ? 'Click to change link' : 'Click to select target node'),
+                                            className: `flex-1 min-w-[40px] px-1 py-0.5 text-xs border border-gray-300 rounded cursor-pointer ${linkingMode.active && linkingMode.targetRowIndex === index ? 'bg-blue-100 border-blue-400' : 'bg-gray-50 hover:bg-gray-100'}`
                                         }),
                                         // Clear button - shows when there's a value and not in linking mode
                                         ...(node.Linked_Node_ID_xA && !(linkingMode.active && linkingMode.targetRowIndex === index) ? [
@@ -1635,20 +1819,15 @@
                                                 title: "Clear link"
                                             }, React.createElement(X, { size: 14 }))
                                         ] : []),
-                                        // Cancel or Link button
-                                        linkingMode.active && linkingMode.targetRowIndex === index ?
+                                        // Cancel button - shows only during linking mode
+                                        ...(linkingMode.active && linkingMode.targetRowIndex === index ? [
                                             React.createElement('button', {
                                                 key: 'cancel',
                                                 onClick: exitLinkMode,
                                                 className: "p-0.5 text-gray-500 hover:text-red-500",
                                                 title: "Cancel linking"
-                                            }, React.createElement(X, { size: 14 })) :
-                                            React.createElement('button', {
-                                                key: 'link',
-                                                onClick: () => enterLinkMode(index),
-                                                className: "p-0.5 text-blue-500 hover:text-blue-700",
-                                                title: "Click to enter link mode"
-                                            }, React.createElement(Link, { size: 14 }))
+                                            }, React.createElement(X, { size: 14 }))
+                                        ] : [])
                                     ])),
                                     React.createElement('td', {
                                         key: 'label',
@@ -1807,6 +1986,13 @@
                         }, [
                             React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
                             React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                        ]),
+                        React.createElement('button', {
+                            key: 'excalidraw', onClick: handleExportExcalidraw,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excalidraw")
                         ])
                     ]),
 
@@ -1863,6 +2049,13 @@
                         }, [
                             React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
                             React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                        ]),
+                        React.createElement('button', {
+                            key: 'excalidraw', onClick: handleExportExcalidrawCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excalidraw")
                         ]),
                         // Separator for image formats
                         React.createElement('div', { key: 'sep', className: "border-t border-blue-200 pt-2 mt-2" }),
