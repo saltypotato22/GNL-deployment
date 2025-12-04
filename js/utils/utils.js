@@ -378,6 +378,41 @@
         return widths;
     };
 
+    /**
+     * Generate context summary for AI chat
+     * Used to provide token-efficient context for large graphs
+     * @param {Array} nodes - Array of node objects
+     * @returns {Object} Summary object with totalNodes, totalGroups, totalLinks, groups array
+     */
+    const generateContextSummary = function(nodes) {
+        const groups = {};
+
+        nodes.forEach(node => {
+            const groupName = node.Group_xA || 'Ungrouped';
+            if (!groups[groupName]) {
+                groups[groupName] = { count: 0, nodes: [], links: 0 };
+            }
+            groups[groupName].count++;
+            groups[groupName].nodes.push(node.Node_xA);
+            if (node.Linked_Node_ID_xA) {
+                groups[groupName].links++;
+            }
+        });
+
+        return {
+            totalNodes: nodes.length,
+            totalGroups: Object.keys(groups).length,
+            totalLinks: nodes.filter(n => n.Linked_Node_ID_xA).length,
+            groups: Object.entries(groups).map(([name, data]) => ({
+                name,
+                nodeCount: data.count,
+                nodeNames: data.nodes.slice(0, 5), // First 5 nodes only
+                hasMore: data.nodes.length > 5,
+                linkCount: data.links
+            }))
+        };
+    };
+
     // Expose utilities to global namespace
     window.GraphApp.utils = {
         validateNodes,
@@ -387,7 +422,8 @@
         hasCycle,
         parseMermaidToNodes,
         measureTextPx,
-        computeColumnWidths
+        computeColumnWidths,
+        generateContextSummary
     };
 
 })(window);

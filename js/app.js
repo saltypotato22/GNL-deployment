@@ -11,7 +11,7 @@
         const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
         // Get icons from namespace
-        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
+        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, Sparkles, Send, Settings, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
 
         // State Management - Load sample data by default
         const [nodes, setNodes] = useState(() => window.GraphApp.data.sample || []);
@@ -54,6 +54,30 @@
             Linked_Node_ID_xA: 90,
             Link_Label_xB: 70
         });
+
+        // AI Generate state
+        const [showSettingsModal, setShowSettingsModal] = useState(false);
+        const [apiKey, setApiKey] = useState(() => {
+            try { return localStorage.getItem('anthropic_api_key') || ''; }
+            catch { return ''; }
+        });
+        const [aiModel, setAiModel] = useState(() => {
+            try { return localStorage.getItem('anthropic_model') || 'claude-sonnet-4-5-20250929'; }
+            catch { return 'claude-sonnet-4-5-20250929'; }
+        });
+        const [showAIModal, setShowAIModal] = useState(false);
+        const [aiPrompt, setAiPrompt] = useState('');
+        const [aiLoading, setAiLoading] = useState(false);
+        const [aiError, setAiError] = useState('');
+        const [aiConversation, setAiConversation] = useState([]);
+        // Format: [{ role: 'user'|'assistant', content: string, type: 'message'|'delta'|'full', timestamp: Date }]
+
+        // AI Modal position and size (draggable/resizable)
+        const [aiModalPos, setAiModalPos] = useState({ x: 100, y: 50 });
+        const [aiModalSize, setAiModalSize] = useState({ width: 400, height: 500 });
+        const [aiDragging, setAiDragging] = useState(false);
+        const [aiResizing, setAiResizing] = useState(false);
+        const aiDragStart = useRef({ x: 0, y: 0 });
 
         // Refs
         const canvasRef = useRef(null);
@@ -675,6 +699,489 @@
             saveToHistory(newNodes);
         }, [nodes, saveToHistory]);
 
+        // ============================================================================
+        // AI CHAT FEATURE - Iterative Graph Editing via Claude API
+        // ============================================================================
+        // Features:
+        // - Chat-style interface with conversation history
+        // - Three response types: Full CSV (new graphs), Delta Ops (edits), Messages (Q&A)
+        // - Token-efficient context: Full CSV for ≤30 nodes, summary for larger graphs
+        // - Draggable/resizable modal window
+        // - Delta operations: ADD, DELETE, UPDATE, RENAME_GROUP, CONNECT, DISCONNECT
+        // ============================================================================
+
+        /**
+         * AI System Prompt - Defines schema, operations, and conversation behavior
+         * {CONTEXT} placeholder is replaced with current graph state before each API call
+         */
+        const AI_SYSTEM_PROMPT = `You are a graph diagram assistant. You help users create, modify, and understand node-link diagrams.
+
+DATA SCHEMA:
+- Group_xA: Container/equipment name (e.g., "Router", "PLC Rack")
+- Node_xA: Item within the group (e.g., "WAN Port", "24V Feed")
+- ID_xA: Unique identifier in format "Group-Node" (auto-generated)
+- Linked_Node_ID_xA: Target node ID to connect to (format: "Group-Node")
+- Link_Label_xB: Optional connection label (e.g., "Ethernet", "F01-Red")
+
+CURRENT GRAPH:
+{CONTEXT}
+
+RESPONSE FORMATS:
+
+1. For SIMPLE changes (add/delete/rename/connect), use JSON operations:
+\`\`\`json
+{"operations": [...], "summary": "Brief description of changes"}
+\`\`\`
+
+Available operations:
+- ADD: {"op": "ADD", "nodes": [{"Group_xA": "...", "Node_xA": "...", "Linked_Node_ID_xA": "...", "Link_Label_xB": "..."}]}
+- DELETE: {"op": "DELETE", "ids": ["Group-Node1", "Group-Node2"]}
+- UPDATE: {"op": "UPDATE", "id": "Group-Node", "changes": {"Node_xA": "NewName", "Link_Label_xB": "NewLabel"}}
+- RENAME_GROUP: {"op": "RENAME_GROUP", "from": "OldGroup", "to": "NewGroup"}
+- CONNECT: {"op": "CONNECT", "from": "SourceGroup-Node", "to": "TargetGroup-Node", "label": "optional label"}
+- DISCONNECT: {"op": "DISCONNECT", "id": "Group-Node"}
+
+2. For NEW GRAPHS or COMPLEX transformations, output full CSV:
+\`\`\`csv
+Group_xA,Node_xA,Linked_Node_ID_xA,Link_Label_xB
+Router,WAN,,
+Router,LAN,Switch-Uplink,Ethernet
+...
+\`\`\`
+
+3. For QUESTIONS, EXPLANATIONS, or CONVERSATION, respond with plain text (no code blocks).
+
+WHEN TO ASK vs ACT:
+- ASK when the request is ambiguous (e.g., "add a server" - which group should it go in?)
+- ASK when multiple nodes could match (e.g., "rename Server" but 3 nodes contain "Server")
+- EXPLAIN when user asks about the graph (e.g., "what's connected to the router?")
+- CONFIRM before large deletions (5+ nodes) - describe what will be deleted and ask for confirmation
+- ACT directly when the request is clear and specific
+
+IMPORTANT RULES:
+- Every Linked_Node_ID_xA must reference an existing ID (format: "Group-Node")
+- When generating full CSV, every node needs its own row (even orphan nodes with no links)
+- If a node has multiple connections, include only the primary one
+- Be helpful and conversational - you can discuss the graph, suggest improvements, or answer questions`;
+
+        /**
+         * Parse AI response into structured format
+         * @param {string} text - Raw response from Claude API
+         * @returns {Object} Parsed response: { type: 'full'|'delta'|'message', ... }
+         *   - type: 'full' → { csv: string, summary: string } - Full graph replacement
+         *   - type: 'delta' → { operations: Array, summary: string } - Incremental edits
+         *   - type: 'message' → { content: string } - Conversational response
+         */
+        const parseAIResponse = useCallback((text) => {
+            // Try JSON operations first (delta mode)
+            const jsonMatch = text.match(/```(?:json)?\n([\s\S]*?)\n```/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[1]);
+                    if (parsed.operations && Array.isArray(parsed.operations)) {
+                        return {
+                            type: 'delta',
+                            operations: parsed.operations,
+                            summary: parsed.summary || 'Applied changes'
+                        };
+                    }
+                } catch (e) {
+                    // Not valid JSON, fall through to CSV check
+                }
+            }
+
+            // Try CSV (full replacement mode)
+            const csvMatch = text.match(/```(?:csv)?\n([\s\S]*?)\n```/);
+            if (csvMatch) {
+                return {
+                    type: 'full',
+                    csv: csvMatch[1].trim(),
+                    summary: 'Generated graph'
+                };
+            }
+
+            // Fallback: look for CSV-like content without code blocks
+            const lines = text.split('\n');
+            const csvLines = lines.filter(line =>
+                line.includes('Group_xA') ||
+                (line.includes(',') && !line.startsWith('#') && !line.startsWith('{'))
+            );
+            if (csvLines.length > 1) {
+                return {
+                    type: 'full',
+                    csv: csvLines.join('\n'),
+                    summary: 'Generated graph'
+                };
+            }
+
+            // No code blocks = conversational message (questions, explanations, etc.)
+            return {
+                type: 'message',
+                content: text.trim()
+            };
+        }, []);
+
+        /**
+         * Apply delta operations to node array (immutably)
+         * Supports: ADD, DELETE, UPDATE, RENAME_GROUP, CONNECT, DISCONNECT
+         * Automatically maintains referential integrity (updates Linked_Node_ID_xA when IDs change)
+         * @param {Array} operations - Array of operation objects
+         * @param {Array} currentNodes - Current node array
+         * @returns {Object} { nodes: Array, changes: Array<string> } - Updated nodes and change log
+         */
+        const applyDeltaOperations = useCallback((operations, currentNodes) => {
+            let newNodes = currentNodes.map(n => ({ ...n })); // Clone all nodes
+            const changes = [];
+
+            operations.forEach(op => {
+                switch (op.op) {
+                    case 'ADD':
+                        if (op.nodes && Array.isArray(op.nodes)) {
+                            op.nodes.forEach(node => {
+                                const newNode = {
+                                    Group_xA: node.Group_xA || '',
+                                    Node_xA: node.Node_xA || '',
+                                    ID_xA: `${node.Group_xA}-${node.Node_xA}`,
+                                    Linked_Node_ID_xA: node.Linked_Node_ID_xA || '',
+                                    Link_Label_xB: node.Link_Label_xB || '',
+                                    Hidden_Node_xB: 0,
+                                    Hidden_Link_xB: 0,
+                                    Link_Arrow_xB: 'To'
+                                };
+                                newNodes.push(newNode);
+                                changes.push(`Added ${newNode.ID_xA}`);
+                            });
+                        }
+                        break;
+
+                    case 'DELETE':
+                        if (op.ids && Array.isArray(op.ids)) {
+                            const idsToDelete = new Set(op.ids);
+                            const beforeCount = newNodes.length;
+                            newNodes = newNodes.filter(n => !idsToDelete.has(n.ID_xA));
+                            // Clear references to deleted nodes
+                            newNodes.forEach(n => {
+                                if (idsToDelete.has(n.Linked_Node_ID_xA)) {
+                                    n.Linked_Node_ID_xA = '';
+                                }
+                            });
+                            changes.push(`Deleted ${beforeCount - newNodes.length} node(s)`);
+                        }
+                        break;
+
+                    case 'UPDATE':
+                        if (op.id && op.changes) {
+                            const idx = newNodes.findIndex(n => n.ID_xA === op.id);
+                            if (idx !== -1) {
+                                const oldID = newNodes[idx].ID_xA;
+                                // Apply changes
+                                Object.keys(op.changes).forEach(key => {
+                                    if (key !== 'ID_xA') { // Don't allow direct ID changes
+                                        newNodes[idx][key] = op.changes[key];
+                                    }
+                                });
+                                // Regenerate ID if Group or Node changed
+                                if (op.changes.Group_xA || op.changes.Node_xA) {
+                                    newNodes[idx].ID_xA = `${newNodes[idx].Group_xA}-${newNodes[idx].Node_xA}`;
+                                    // Update all references to old ID
+                                    if (oldID && newNodes[idx].ID_xA && oldID !== newNodes[idx].ID_xA) {
+                                        newNodes.forEach(n => {
+                                            if (n.Linked_Node_ID_xA === oldID) {
+                                                n.Linked_Node_ID_xA = newNodes[idx].ID_xA;
+                                            }
+                                        });
+                                    }
+                                }
+                                changes.push(`Updated ${op.id}`);
+                            }
+                        }
+                        break;
+
+                    case 'RENAME_GROUP':
+                        if (op.from && op.to) {
+                            let renamedCount = 0;
+                            newNodes.forEach(n => {
+                                if (n.Group_xA === op.from) {
+                                    const oldID = n.ID_xA;
+                                    n.Group_xA = op.to;
+                                    n.ID_xA = `${op.to}-${n.Node_xA}`;
+                                    // Update all references to old ID
+                                    newNodes.forEach(ref => {
+                                        if (ref.Linked_Node_ID_xA === oldID) {
+                                            ref.Linked_Node_ID_xA = n.ID_xA;
+                                        }
+                                    });
+                                    renamedCount++;
+                                }
+                            });
+                            changes.push(`Renamed group "${op.from}" to "${op.to}" (${renamedCount} nodes)`);
+                        }
+                        break;
+
+                    case 'CONNECT':
+                        if (op.from && op.to) {
+                            const fromIdx = newNodes.findIndex(n => n.ID_xA === op.from);
+                            if (fromIdx !== -1) {
+                                newNodes[fromIdx].Linked_Node_ID_xA = op.to;
+                                if (op.label) {
+                                    newNodes[fromIdx].Link_Label_xB = op.label;
+                                }
+                                changes.push(`Connected ${op.from} → ${op.to}`);
+                            }
+                        }
+                        break;
+
+                    case 'DISCONNECT':
+                        if (op.id) {
+                            const discIdx = newNodes.findIndex(n => n.ID_xA === op.id);
+                            if (discIdx !== -1) {
+                                newNodes[discIdx].Linked_Node_ID_xA = '';
+                                changes.push(`Disconnected ${op.id}`);
+                            }
+                        }
+                        break;
+
+                    default:
+                        console.warn('Unknown delta operation:', op.op);
+                }
+            });
+
+            return { nodes: newNodes, changes };
+        }, []);
+
+        /**
+         * Build context string for AI system prompt (token-efficient)
+         * - ≤30 nodes: Full CSV with all columns
+         * - >30 nodes: Summary with group names, node counts, and sample nodes
+         * @param {Array} nodeArray - Current node array
+         * @returns {string} Context string to inject into AI_SYSTEM_PROMPT
+         */
+        const buildContext = useCallback((nodeArray) => {
+            if (!nodeArray || nodeArray.length === 0) {
+                return 'Empty graph. Ready to create a new diagram.';
+            }
+
+            // For small graphs (≤30 nodes), include full CSV
+            if (nodeArray.length <= 30) {
+                const lines = ['Group_xA,Node_xA,ID_xA,Linked_Node_ID_xA,Link_Label_xB'];
+                nodeArray.forEach(n => {
+                    lines.push(`${n.Group_xA},${n.Node_xA},${n.ID_xA},${n.Linked_Node_ID_xA || ''},${n.Link_Label_xB || ''}`);
+                });
+                return `FULL GRAPH (${nodeArray.length} nodes):\n${lines.join('\n')}`;
+            }
+
+            // For larger graphs, provide summary
+            const summary = window.GraphApp.utils.generateContextSummary(nodeArray);
+            let ctx = `GRAPH SUMMARY: ${summary.totalNodes} nodes, ${summary.totalGroups} groups, ${summary.totalLinks} connections\n\nGROUPS:\n`;
+            summary.groups.forEach(g => {
+                const nodeList = g.nodeNames.join(', ') + (g.hasMore ? ', ...' : '');
+                ctx += `- ${g.name} (${g.nodeCount} nodes, ${g.linkCount} links): ${nodeList}\n`;
+            });
+            return ctx;
+        }, []);
+
+        /**
+         * Main AI chat handler - sends user message to Claude API and processes response
+         * Maintains conversation history, handles all response types, updates graph state
+         * @async
+         */
+        const generateFromAI = useCallback(async () => {
+            if (!apiKey || !aiPrompt.trim()) return;
+
+            setAiLoading(true);
+            setAiError('');
+
+            try {
+                // Build messages array with conversation history (last 6 messages for token efficiency)
+                const messages = [];
+                aiConversation.slice(-6).forEach(msg => {
+                    messages.push({ role: msg.role, content: msg.content });
+                });
+                messages.push({ role: 'user', content: aiPrompt });
+
+                // Inject current graph context into system prompt
+                const contextString = buildContext(nodes);
+                const systemPrompt = AI_SYSTEM_PROMPT.replace('{CONTEXT}', contextString);
+
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiKey,
+                        'anthropic-version': '2023-06-01',
+                        'anthropic-dangerous-direct-browser-access': 'true'
+                    },
+                    body: JSON.stringify({
+                        model: aiModel,
+                        max_tokens: 4096,
+                        system: systemPrompt,
+                        messages: messages
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    if (response.status === 401) {
+                        throw new Error('Invalid API key. Check your key in Settings.');
+                    } else if (response.status === 429) {
+                        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+                    } else {
+                        throw new Error(errorData.error?.message || `API error: ${response.status}`);
+                    }
+                }
+
+                const data = await response.json();
+                const responseText = data.content[0].text;
+                const parsed = parseAIResponse(responseText);
+
+                let newNodes = nodes; // Default: no change
+                let assistantMessage;
+                let responseType = parsed.type;
+
+                if (parsed.type === 'full') {
+                    // Full CSV replacement
+                    const csvParsed = Papa.parse(parsed.csv, { header: true, skipEmptyLines: true });
+                    const importedNodes = csvParsed.data
+                        .filter(row => row.Group_xA && row.Node_xA)
+                        .map(row => ({
+                            Group_xA: row.Group_xA || '',
+                            Node_xA: row.Node_xA || '',
+                            ID_xA: `${row.Group_xA}-${row.Node_xA}`,
+                            Linked_Node_ID_xA: row.Linked_Node_ID_xA || '',
+                            Link_Label_xB: row.Link_Label_xB || '',
+                            Hidden_Node_xB: 0,
+                            Hidden_Link_xB: 0,
+                            Link_Arrow_xB: 'To'
+                        }));
+
+                    if (importedNodes.length === 0) {
+                        throw new Error('No valid nodes in generated data. Try a different description.');
+                    }
+
+                    newNodes = importedNodes;
+                    assistantMessage = `Created ${newNodes.length} nodes in ${new Set(newNodes.map(n => n.Group_xA)).size} groups`;
+
+                    // Clear positions for fresh layout
+                    window.GraphApp.core.clearCytoscapePositions();
+                    isFirstRenderRef.current = true;
+
+                    setNodes(newNodes);
+                    if (nodes.length === 0) {
+                        setCurrentFileName('AI Generated');
+                    }
+
+                    // Validate and save to history
+                    const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                    setErrors(validationErrors);
+                    saveToHistory(newNodes);
+
+                } else if (parsed.type === 'delta') {
+                    // Delta operations
+                    const result = applyDeltaOperations(parsed.operations, nodes);
+                    newNodes = result.nodes;
+                    assistantMessage = result.changes.length > 0
+                        ? result.changes.join('; ')
+                        : parsed.summary || 'No changes applied';
+
+                    if (result.changes.length > 0) {
+                        // Clear positions for fresh layout
+                        window.GraphApp.core.clearCytoscapePositions();
+                        isFirstRenderRef.current = true;
+
+                        setNodes(newNodes);
+
+                        // Validate and save to history
+                        const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                        setErrors(validationErrors);
+                        saveToHistory(newNodes);
+                    }
+
+                } else {
+                    // Message type - conversational response, no graph changes
+                    assistantMessage = parsed.content;
+                    // No setNodes() or saveToHistory() - graph unchanged
+                }
+
+                // Update conversation history
+                setAiConversation(prev => [
+                    ...prev,
+                    { role: 'user', content: aiPrompt, timestamp: new Date() },
+                    { role: 'assistant', content: assistantMessage, type: responseType, timestamp: new Date() }
+                ]);
+
+                // Clear prompt but keep modal open for continued conversation
+                setAiPrompt('');
+
+            } catch (err) {
+                setAiError(err.message);
+            } finally {
+                setAiLoading(false);
+            }
+        }, [apiKey, aiModel, aiPrompt, aiConversation, nodes, buildContext, parseAIResponse, applyDeltaOperations, saveToHistory]);
+
+        // AI Modal drag/resize handlers - allow moving and resizing the chat window
+        const handleAiDragStart = useCallback((e) => {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            setAiDragging(true);
+            aiDragStart.current = { x: e.clientX - aiModalPos.x, y: e.clientY - aiModalPos.y };
+            e.preventDefault();
+        }, [aiModalPos]);
+
+        const handleAiDragMove = useCallback((e) => {
+            if (aiDragging) {
+                const newX = Math.max(0, Math.min(window.innerWidth - aiModalSize.width, e.clientX - aiDragStart.current.x));
+                const newY = Math.max(0, Math.min(window.innerHeight - aiModalSize.height, e.clientY - aiDragStart.current.y));
+                setAiModalPos({ x: newX, y: newY });
+            }
+            if (aiResizing) {
+                const newWidth = Math.max(300, Math.min(800, e.clientX - aiModalPos.x));
+                const newHeight = Math.max(300, Math.min(700, e.clientY - aiModalPos.y));
+                setAiModalSize({ width: newWidth, height: newHeight });
+            }
+        }, [aiDragging, aiResizing, aiModalPos, aiModalSize]);
+
+        const handleAiDragEnd = useCallback(() => {
+            setAiDragging(false);
+            setAiResizing(false);
+        }, []);
+
+        // Attach global mouse handlers for AI modal drag/resize
+        useEffect(() => {
+            if (aiDragging || aiResizing) {
+                window.addEventListener('mousemove', handleAiDragMove);
+                window.addEventListener('mouseup', handleAiDragEnd);
+                return () => {
+                    window.removeEventListener('mousemove', handleAiDragMove);
+                    window.removeEventListener('mouseup', handleAiDragEnd);
+                };
+            }
+        }, [aiDragging, aiResizing, handleAiDragMove, handleAiDragEnd]);
+
+        // Save API settings to localStorage
+        const saveAPISettings = useCallback(() => {
+            try {
+                if (apiKey) {
+                    localStorage.setItem('anthropic_api_key', apiKey);
+                } else {
+                    localStorage.removeItem('anthropic_api_key');
+                }
+                localStorage.setItem('anthropic_model', aiModel);
+            } catch (e) {
+                console.warn('Could not save to localStorage:', e);
+            }
+            setShowSettingsModal(false);
+        }, [apiKey, aiModel]);
+
+        // Clear API key
+        const clearAPIKey = useCallback(() => {
+            setApiKey('');
+            try {
+                localStorage.removeItem('anthropic_api_key');
+            } catch (e) {
+                console.warn('Could not clear localStorage:', e);
+            }
+        }, []);
+
         // Delete node
         const handleDeleteNode = useCallback((index) => {
             const nodeToDelete = nodes[index];
@@ -1245,7 +1752,23 @@
                                     className: "mr-1"
                                 }),
                                 "Add Node"
-                            ])
+                            ]),
+
+                            // AI Generate button (only shown when API key is configured)
+                            ...(apiKey ? [
+                                React.createElement('button', {
+                                    key: 'ai-generate',
+                                    onClick: () => setShowAIModal(true),
+                                    className: "flex items-center px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600"
+                                }, [
+                                    React.createElement(Sparkles, {
+                                        key: 'icon',
+                                        size: 12,
+                                        className: "mr-1"
+                                    }),
+                                    "AI Generate"
+                                ])
+                            ] : [])
                         ]),
 
                         React.createElement('div', {
@@ -1484,7 +2007,19 @@
                                     className: "text-xs text-gray-400 ml-2 truncate max-w-[150px]",
                                     title: currentFileName
                                 }, currentFileName)
-                            ] : [])
+                            ] : []),
+
+                            // Settings button (gear icon)
+                            React.createElement('div', {
+                                key: 'settings-separator',
+                                className: "w-px h-6 bg-gray-300 ml-2"
+                            }),
+                            React.createElement('button', {
+                                key: 'settings-btn',
+                                onClick: () => setShowSettingsModal(true),
+                                className: "p-1.5 rounded hover:bg-gray-100 text-gray-600",
+                                title: "Settings (API Key)"
+                            }, React.createElement(Settings, { size: 16 }))
                         ])
                     ])
                 ])
@@ -2258,7 +2793,278 @@
                     onClick: () => setShowReadmeModal(false),
                     className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
                 }, "Close")
-            ]))
+            ])),
+
+            // Settings modal
+            showSettingsModal && React.createElement('div', {
+                key: 'settings-modal',
+                className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
+                onClick: () => setShowSettingsModal(false)
+            }, React.createElement('div', {
+                key: 'modal-content',
+                className: "bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4",
+                onClick: (e) => e.stopPropagation()
+            }, [
+                React.createElement('h3', {
+                    key: 'title',
+                    className: "text-lg font-semibold mb-4 text-gray-800"
+                }, "AI Settings"),
+
+                // API Key input
+                React.createElement('div', { key: 'api-key-section', className: "mb-4" }, [
+                    React.createElement('label', {
+                        key: 'label',
+                        className: "block text-sm font-medium text-gray-700 mb-1"
+                    }, "Anthropic API Key"),
+                    React.createElement('div', {
+                        key: 'input-group',
+                        className: "flex gap-2"
+                    }, [
+                        React.createElement('input', {
+                            key: 'input',
+                            type: 'password',
+                            value: apiKey,
+                            onChange: (e) => setApiKey(e.target.value),
+                            placeholder: 'sk-ant-...',
+                            className: "flex-1 px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        }),
+                        React.createElement('button', {
+                            key: 'clear',
+                            onClick: clearAPIKey,
+                            className: "px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded border border-red-200",
+                            title: "Clear API key"
+                        }, "Clear")
+                    ]),
+                    React.createElement('p', {
+                        key: 'help',
+                        className: "mt-1 text-xs text-gray-500"
+                    }, "Your key is stored locally in your browser. Never shared.")
+                ]),
+
+                // Model selector
+                React.createElement('div', { key: 'model-section', className: "mb-4" }, [
+                    React.createElement('label', {
+                        key: 'label',
+                        className: "block text-sm font-medium text-gray-700 mb-2"
+                    }, "Model"),
+                    React.createElement('div', {
+                        key: 'options',
+                        className: "space-y-2"
+                    }, [
+                        React.createElement('label', {
+                            key: 'sonnet',
+                            className: "flex items-center gap-2 cursor-pointer"
+                        }, [
+                            React.createElement('input', {
+                                key: 'radio',
+                                type: 'radio',
+                                name: 'model',
+                                checked: aiModel === 'claude-sonnet-4-5-20250929',
+                                onChange: () => setAiModel('claude-sonnet-4-5-20250929'),
+                                className: "text-blue-600"
+                            }),
+                            React.createElement('span', { key: 'text', className: "text-sm" }, "Sonnet 4.5"),
+                            React.createElement('span', { key: 'desc', className: "text-xs text-gray-500" }, "(faster, cheaper)")
+                        ]),
+                        React.createElement('label', {
+                            key: 'opus',
+                            className: "flex items-center gap-2 cursor-pointer"
+                        }, [
+                            React.createElement('input', {
+                                key: 'radio',
+                                type: 'radio',
+                                name: 'model',
+                                checked: aiModel === 'claude-opus-4-5-20250929',
+                                onChange: () => setAiModel('claude-opus-4-5-20250929'),
+                                className: "text-blue-600"
+                            }),
+                            React.createElement('span', { key: 'text', className: "text-sm" }, "Opus 4.5"),
+                            React.createElement('span', { key: 'desc', className: "text-xs text-gray-500" }, "(best quality)")
+                        ])
+                    ])
+                ]),
+
+                // Buttons
+                React.createElement('div', {
+                    key: 'buttons',
+                    className: "flex gap-2 mt-6"
+                }, [
+                    React.createElement('button', {
+                        key: 'cancel',
+                        onClick: () => setShowSettingsModal(false),
+                        className: "flex-1 px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
+                    }, "Cancel"),
+                    React.createElement('button', {
+                        key: 'save',
+                        onClick: saveAPISettings,
+                        className: "flex-1 px-4 py-2 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded"
+                    }, "Save")
+                ])
+            ])),
+
+            // AI Chat modal (draggable, resizable, no overlay)
+            showAIModal && React.createElement('div', {
+                key: 'ai-modal',
+                className: "fixed z-50 bg-white rounded-lg shadow-2xl flex flex-col border border-gray-300",
+                style: {
+                    left: aiModalPos.x,
+                    top: aiModalPos.y,
+                    width: aiModalSize.width,
+                    height: aiModalSize.height,
+                    userSelect: aiDragging || aiResizing ? 'none' : 'auto'
+                }
+            }, [
+                // Draggable Header
+                React.createElement('div', {
+                    key: 'header',
+                    className: "flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg cursor-move",
+                    onMouseDown: handleAiDragStart
+                }, [
+                    React.createElement('div', {
+                        key: 'title-area',
+                        className: "flex items-center gap-2"
+                    }, [
+                        React.createElement(Sparkles, { key: 'icon', size: 18, className: "text-purple-500" }),
+                        React.createElement('span', { key: 'title', className: "font-semibold text-gray-800 text-sm" }, "AI Assistant")
+                    ]),
+                    React.createElement('div', {
+                        key: 'header-buttons',
+                        className: "flex items-center gap-2"
+                    }, [
+                        // Clear history button
+                        aiConversation.length > 0 && React.createElement('button', {
+                            key: 'clear-history',
+                            onClick: () => setAiConversation([]),
+                            className: "text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-200",
+                            title: "Clear conversation"
+                        }, "Clear"),
+                        // Close button
+                        React.createElement('button', {
+                            key: 'close',
+                            onClick: () => { setShowAIModal(false); setAiError(''); },
+                            className: "text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-200 rounded",
+                            title: "Close"
+                        }, React.createElement(X, { size: 18 }))
+                    ])
+                ]),
+
+                // Context badge
+                React.createElement('div', {
+                    key: 'context-badge',
+                    className: "px-3 py-1.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between"
+                }, [
+                    React.createElement('span', {
+                        key: 'context',
+                        className: "text-xs text-gray-500"
+                    }, nodes.length > 0
+                        ? `${nodes.length} nodes, ${new Set(nodes.map(n => n.Group_xA)).size} groups`
+                        : 'No graph - describe what to create'),
+                    React.createElement('span', {
+                        key: 'model',
+                        className: "text-xs text-gray-400"
+                    }, aiModel.includes('opus') ? 'Opus 4.5' : 'Sonnet 4.5')
+                ]),
+
+                // Conversation panel (scrollable)
+                React.createElement('div', {
+                    key: 'conversation',
+                    className: "flex-1 overflow-y-auto p-3 space-y-2",
+                    style: { minHeight: '100px' }
+                }, aiConversation.length === 0
+                    ? React.createElement('div', {
+                        key: 'empty-state',
+                        className: "text-center text-gray-400 py-6"
+                    }, [
+                        React.createElement('p', { key: 'line1', className: "mb-1 text-sm" }, "Start a conversation"),
+                        React.createElement('p', { key: 'line2', className: "text-xs" }, '"Create a home network"'),
+                        React.createElement('p', { key: 'line3', className: "text-xs" }, '"Add a printer"')
+                    ])
+                    : aiConversation.map((msg, idx) =>
+                        React.createElement('div', {
+                            key: `msg-${idx}`,
+                            className: `flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`
+                        }, React.createElement('div', {
+                            className: `max-w-[85%] px-2.5 py-1.5 rounded-lg text-xs ${
+                                msg.role === 'user'
+                                    ? 'bg-purple-500 text-white'
+                                    : msg.type === 'message'
+                                        ? 'bg-gray-100 text-gray-800'
+                                        : 'bg-green-50 text-green-800 border border-green-200'
+                            }`
+                        }, [
+                            msg.role === 'assistant' && msg.type !== 'message' && React.createElement('span', {
+                                key: 'badge',
+                                className: "text-xs font-medium block mb-0.5 opacity-70"
+                            }, msg.type === 'full' ? '📊 Generated' : '✏️ Modified'),
+                            React.createElement('span', { key: 'content' }, msg.content)
+                        ]))
+                    )
+                ),
+
+                // Error display
+                aiError && React.createElement('div', {
+                    key: 'error',
+                    className: "mx-3 mb-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700"
+                }, aiError),
+
+                // Input area
+                React.createElement('div', {
+                    key: 'input-area',
+                    className: "p-3 border-t border-gray-200"
+                }, [
+                    React.createElement('div', {
+                        key: 'input-row',
+                        className: "flex gap-2"
+                    }, [
+                        React.createElement('textarea', {
+                            key: 'textarea',
+                            value: aiPrompt,
+                            onChange: (e) => setAiPrompt(e.target.value),
+                            onKeyDown: (e) => {
+                                if (e.key === 'Enter' && !e.shiftKey && aiPrompt.trim() && !aiLoading) {
+                                    e.preventDefault();
+                                    generateFromAI();
+                                }
+                            },
+                            placeholder: nodes.length > 0
+                                ? "Ask a question or describe changes..."
+                                : "Describe your diagram...",
+                            rows: 2,
+                            disabled: aiLoading,
+                            className: "flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none disabled:bg-gray-100"
+                        }),
+                        React.createElement('button', {
+                            key: 'send',
+                            onClick: generateFromAI,
+                            disabled: aiLoading || !aiPrompt.trim(),
+                            className: "px-4 py-2 text-sm text-white bg-purple-500 hover:bg-purple-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center",
+                            title: "Send (Enter)"
+                        }, aiLoading
+                            ? React.createElement('span', { className: "inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" })
+                            : React.createElement(Send, { size: 18 })
+                        )
+                    ]),
+                    React.createElement('p', {
+                        key: 'hint',
+                        className: "mt-1 text-xs text-gray-400"
+                    }, "Enter to send · Drag header to move")
+                ]),
+
+                // Resize handle (bottom-right corner)
+                React.createElement('div', {
+                    key: 'resize-handle',
+                    className: "absolute bottom-0 right-0 w-4 h-4 cursor-se-resize",
+                    style: {
+                        background: 'linear-gradient(135deg, transparent 50%, #9ca3af 50%)',
+                        borderBottomRightRadius: '0.5rem'
+                    },
+                    onMouseDown: (e) => {
+                        setAiResizing(true);
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                })
+            ])
         ]);
     }
 

@@ -411,6 +411,24 @@
         ], props);
     };
 
+    // Sparkles icon (for AI generate)
+    const Sparkles = function(props) {
+        return createIcon([
+            React.createElement('path', {
+                key: 'path1',
+                d: 'M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z'
+            }),
+            React.createElement('path', {
+                key: 'path2',
+                d: 'M19 13l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z'
+            }),
+            React.createElement('path', {
+                key: 'path3',
+                d: 'M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5L5 17z'
+            })
+        ], props);
+    };
+
     // Panel layout icons - show split proportions
     // LayoutCanvasPriority: small table (left), big canvas (right)
     const LayoutCanvasPriority = function(props) {
@@ -478,6 +496,20 @@
         ]);
     };
 
+    // Send icon (for chat input)
+    const Send = function(props) {
+        return createIcon([
+            React.createElement('line', {
+                key: 'line1',
+                x1: '22', y1: '2', x2: '11', y2: '13'
+            }),
+            React.createElement('polygon', {
+                key: 'polygon',
+                points: '22 2 15 22 11 13 2 9 22 2'
+            })
+        ], props);
+    };
+
     // Expose all icons to global namespace
     window.GraphApp.Icons = {
         Upload,
@@ -504,6 +536,8 @@
         RotateCcw,
         RotateCw,
         Copy,
+        Sparkles,
+        Send,
         LayoutCanvasPriority,
         LayoutBalanced,
         LayoutTablePriority
