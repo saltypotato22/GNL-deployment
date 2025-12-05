@@ -14,6 +14,10 @@
 (function(window) {
     'use strict';
 
+    // ===== Configuration Constants =====
+    const NODE_PADDING = 3;   // Minimum gap between nodes (px)
+    const GROUP_GAP = 15;     // Gap between groups (px)
+
     let cy = null;  // Cytoscape instance
     const nodePositions = new Map();  // Store positions for stability
     let currentGroupOrder = [];  // Store group order from data (for layout)
@@ -339,7 +343,7 @@
             cy.on('drag', 'node[!isGroup]', function(evt) {
                 const draggedNode = evt.target;
                 const draggedId = draggedNode.id();
-                const PADDING = 3;  // Minimum 3px gap between nodes
+                const PADDING = NODE_PADDING;
                 const MAX_ITERATIONS = 30;  // Prevent infinite loops
 
                 // Get ALL non-group nodes including labels - prevents cross-group overlaps
@@ -687,6 +691,71 @@
     };
 
     /**
+     * Rearrange nodes within each group on cross-axis while PRESERVING dagre's topology
+     * TB: nodes horizontal within groups, LR: nodes vertical within groups
+     * CRITICAL: Does NOT reposition groups - preserves dagre's 2D layout
+     * This is what makes hierarchical different from compact layout
+     * @param {String} direction - 'TB' or 'LR'
+     */
+    const rearrangeNodesWithinGroups = function(direction) {
+        if (!cy) return;
+
+        const PADDING = NODE_PADDING;
+        const dir = direction || 'TB';
+        const nodeH = 22;
+
+        const groupNodes = cy.nodes('[?isGroup]');
+        if (groupNodes.length === 0) return;
+
+        groupNodes.forEach(group => {
+            const children = group.children().filter(n => !n.data('isGroupLabel'));
+            if (children.length === 0) return;
+
+            // Step 1: Save group's CURRENT center (from dagre - this is the topology!)
+            const bbox = children.boundingBox({ includeOverlays: false });
+            const savedCenterX = (bbox.x1 + bbox.x2) / 2;
+            const savedCenterY = (bbox.y1 + bbox.y2) / 2;
+
+            // Step 2: Arrange nodes at origin on cross-axis
+            if (dir === 'TB') {
+                // TB: nodes horizontal
+                let totalWidth = 0;
+                children.forEach(node => {
+                    totalWidth += calcNodeWidth(node) + PADDING;
+                });
+                totalWidth -= PADDING;
+
+                let x = -totalWidth / 2;
+                children.forEach(node => {
+                    const w = calcNodeWidth(node);
+                    node.position({ x: x + w / 2, y: 0 });
+                    x += w + PADDING;
+                });
+            } else {
+                // LR: nodes vertical
+                const totalHeight = children.length * (nodeH + PADDING) - PADDING;
+                let y = -totalHeight / 2;
+                children.forEach(node => {
+                    node.position({ x: 0, y: y + nodeH / 2 });
+                    y += nodeH + PADDING;
+                });
+            }
+
+            // Step 3: Move nodes to restore SAVED center (preserve dagre topology)
+            children.forEach(node => {
+                const pos = node.position();
+                node.position({
+                    x: pos.x + savedCenterX,
+                    y: pos.y + savedCenterY
+                });
+            });
+        });
+
+        // Reposition labels relative to their sibling nodes
+        repositionLabelsToTopLeft();
+    };
+
+    /**
      * Calculate node width from label (estimates for layout before render)
      * 10px font ~= 6px per char, plus 6px padding (3px each side) + 2px border
      */
@@ -706,7 +775,7 @@
      * Run layout based on direction setting
      * TB (Top to Bottom): Groups stack vertically, nodes flow horizontally within groups
      * LR (Left to Right): Groups stack horizontally, nodes flow vertically within groups
-     * Label nodes are positioned FIRST (LEFT in TB, TOP in LR)
+     * Uses TWO-PASS algorithm to calculate actual bounding boxes including labels
      * 3px padding everywhere - ultra compact, NO overlap
      * @param {String} direction - 'TB' or 'LR'
      */
@@ -714,135 +783,104 @@
         if (!cy) return;
 
         const dir = direction || 'TB';
-        const PADDING = 3;      // 3px padding between nodes within a group
-        const GROUP_GAP = 15;   // 15px gap between groups (visible separation)
-
-        // Get all non-compound nodes (includes both label nodes and regular nodes)
-        const allNodes = cy.nodes('[!isGroup]');
-
-        // Separate label nodes from regular nodes, build group mapping
-        const groupNodes = new Map();  // groupId -> regular nodes
-        const labelNodes = new Map();  // groupId -> label node
-
-        allNodes.forEach(node => {
-            const parentId = node.data('parent');
-
-            if (node.data('isGroupLabel')) {
-                // This is a label node
-                labelNodes.set(parentId, node);
-                if (!groupNodes.has(parentId)) {
-                    groupNodes.set(parentId, []);
-                }
-            } else {
-                // Regular node
-                if (!groupNodes.has(parentId)) {
-                    groupNodes.set(parentId, []);
-                }
-                groupNodes.get(parentId).push(node);
-            }
-        });
+        const PADDING = NODE_PADDING;
+        const nodeH = calcNodeHeight();
 
         // Use stored group order (from nodesToElements) to preserve data order
         const groupOrder = currentGroupOrder;
 
-        const positions = new Map();
-        let currentX = PADDING;
-        let currentY = PADDING;
-        const nodeH = calcNodeHeight();
-
-        if (dir === 'TB') {
-            // TB: Groups top-to-bottom, label at LEFT, then nodes left-to-right
-            groupOrder.forEach(groupId => {
-                const regularNodes = groupNodes.get(groupId) || [];
-                const labelNode = labelNodes.get(groupId);
-
-                // Need at least label node or regular nodes
-                if (!labelNode && regularNodes.length === 0) return;
-
-                let nodeX = PADDING;
-
-                // Position label node first (at LEFT)
-                if (labelNode) {
-                    const labelWidth = calcNodeWidth(labelNode);
-                    positions.set(labelNode.id(), {
-                        x: nodeX + labelWidth / 2,
-                        y: currentY + nodeH / 2
-                    });
-                    nodeX += labelWidth + PADDING;
-                }
-
-                // Position regular nodes left-to-right
-                regularNodes.forEach(node => {
-                    const w = calcNodeWidth(node);
-                    positions.set(node.id(), {
-                        x: nodeX + w / 2,
-                        y: currentY + nodeH / 2
-                    });
-                    nodeX += w + PADDING;
-                });
-
-                // Move to next group (below) - use GROUP_GAP for vertical separation
-                currentY += nodeH + GROUP_GAP;
-            });
-        } else {
-            // LR: Groups left-to-right, label at TOP, then nodes top-to-bottom
-            groupOrder.forEach(groupId => {
-                const regularNodes = groupNodes.get(groupId) || [];
-                const labelNode = labelNodes.get(groupId);
-
-                if (!labelNode && regularNodes.length === 0) return;
-
-                // Find max width in this group (including label)
-                let maxWidth = 0;
-                if (labelNode) {
-                    maxWidth = calcNodeWidth(labelNode);
-                }
-                regularNodes.forEach(node => {
-                    maxWidth = Math.max(maxWidth, calcNodeWidth(node));
-                });
-
-                let nodeY = PADDING;
-
-                // Position label node first (at TOP)
-                if (labelNode) {
-                    positions.set(labelNode.id(), {
-                        x: currentX + maxWidth / 2,
-                        y: nodeY + nodeH / 2
-                    });
-                    nodeY += nodeH + PADDING;
-                }
-
-                // Position regular nodes top-to-bottom
-                regularNodes.forEach(node => {
-                    positions.set(node.id(), {
-                        x: currentX + maxWidth / 2,
-                        y: nodeY + nodeH / 2
-                    });
-                    nodeY += nodeH + PADDING;
-                });
-
-                // Move to next group (right) - use GROUP_GAP for horizontal separation
-                currentX += maxWidth + GROUP_GAP;
-            });
-        }
-
-        // Apply positions
-        allNodes.forEach(node => {
-            const pos = positions.get(node.id());
-            if (pos) {
-                node.position(pos);
+        // Get all compound (group) nodes in order
+        const orderedGroups = [];
+        groupOrder.forEach(groupId => {
+            const group = cy.getElementById(groupId);
+            if (group.length > 0 && group.data('isGroup')) {
+                orderedGroups.push(group);
             }
         });
 
+        if (orderedGroups.length === 0) return;
+
+        // PASS 1: Arrange nodes within each group at origin (centered at 0,0)
+        orderedGroups.forEach(group => {
+            const children = group.children().filter(n => !n.data('isGroupLabel'));
+
+            if (dir === 'TB') {
+                // TB: nodes horizontal within group
+                let totalWidth = 0;
+                children.forEach(node => {
+                    totalWidth += calcNodeWidth(node) + PADDING;
+                });
+                if (children.length > 0) totalWidth -= PADDING;
+
+                let x = -totalWidth / 2;
+                children.forEach(node => {
+                    const w = calcNodeWidth(node);
+                    node.position({ x: x + w / 2, y: 0 });
+                    x += w + PADDING;
+                });
+            } else {
+                // LR: nodes vertical within group
+                const totalHeight = children.length * (nodeH + PADDING) - (children.length > 0 ? PADDING : 0);
+                let y = -totalHeight / 2;
+                children.forEach(node => {
+                    node.position({ x: 0, y: y + nodeH / 2 });
+                    y += nodeH + PADDING;
+                });
+            }
+        });
+
+        // Reposition labels relative to their sibling nodes (above them)
+        repositionLabelsToTopLeft();
+
+        // PASS 2: Stack groups using ACTUAL bounding boxes (includes labels)
+        if (dir === 'TB') {
+            let currentTop = PADDING;
+
+            orderedGroups.forEach(group => {
+                // Get ALL children (including label) for true bounding box
+                const allChildren = group.children();
+                if (allChildren.length === 0) return;
+
+                const bbox = allChildren.boundingBox({ includeOverlays: false });
+
+                // Shift group so its top edge is at currentTop
+                const deltaY = currentTop - bbox.y1;
+
+                allChildren.forEach(node => {
+                    const pos = node.position();
+                    node.position({ x: pos.x, y: pos.y + deltaY });
+                });
+
+                // Next group starts after this one's actual height + gap
+                currentTop = currentTop + bbox.h + GROUP_GAP;
+            });
+        } else {
+            let currentLeft = PADDING;
+
+            orderedGroups.forEach(group => {
+                const allChildren = group.children();
+                if (allChildren.length === 0) return;
+
+                const bbox = allChildren.boundingBox({ includeOverlays: false });
+
+                const deltaX = currentLeft - bbox.x1;
+
+                allChildren.forEach(node => {
+                    const pos = node.position();
+                    node.position({ x: pos.x + deltaX, y: pos.y });
+                });
+
+                currentLeft = currentLeft + bbox.w + GROUP_GAP;
+            });
+        }
+
         // Save positions (only for non-label nodes to preserve draggability)
+        const allNodes = cy.nodes('[!isGroup]');
         allNodes.forEach(node => {
             if (!node.data('isGroupLabel')) {
                 nodePositions.set(node.id(), { ...node.position() });
             }
         });
-
-        // Reposition labels to top-left of each group
-        repositionLabelsToTopLeft();
 
         // Fit to screen
         cy.fit(20);
@@ -861,12 +899,16 @@
     /**
      * Set table-order positions as initial layout
      * Used as pre-layout for fcose/dagre to bias toward table order
-     * Groups appear top-to-bottom, nodes within groups left-to-right
+     * Supports cross-axis arrangement:
+     * - TB: Groups top-to-bottom, nodes left-to-right within groups
+     * - LR: Groups left-to-right, nodes top-to-bottom within groups
      * @param {boolean} extraSpacing - Use extra spacing when links hidden to prevent overlap
+     * @param {string} direction - 'TB' or 'LR' (default 'TB')
      */
-    const setTableOrderPositions = function(extraSpacing) {
+    const setTableOrderPositions = function(extraSpacing, direction) {
         if (!cy) return;
 
+        const dir = direction || 'TB';
         const SPACING_X = extraSpacing ? 140 : 100;  // Horizontal spacing between nodes
         const SPACING_Y = extraSpacing ? 120 : 80;   // Vertical spacing between groups
         const GROUP_GAP = extraSpacing ? 60 : 0;     // Extra gap between groups
@@ -896,31 +938,61 @@
         // Use stored group order for table-order positioning
         const groupOrder = currentGroupOrder;
 
-        let currentY = 0;
+        if (dir === 'TB') {
+            // TB: Groups top-to-bottom, nodes left-to-right within groups
+            let currentY = 0;
 
-        groupOrder.forEach(groupId => {
-            const regularNodes = groupNodes.get(groupId) || [];
-            const labelNode = labelNodes.get(groupId);
+            groupOrder.forEach(groupId => {
+                const regularNodes = groupNodes.get(groupId) || [];
+                const labelNode = labelNodes.get(groupId);
 
-            if (!labelNode && regularNodes.length === 0) return;
+                if (!labelNode && regularNodes.length === 0) return;
 
-            let nodeX = 0;
+                let nodeX = 0;
 
-            // Position label node first (at left)
-            if (labelNode) {
-                labelNode.position({ x: nodeX, y: currentY });
-                nodeX += SPACING_X;
-            }
+                // Position label node first (at left)
+                if (labelNode) {
+                    labelNode.position({ x: nodeX, y: currentY });
+                    nodeX += SPACING_X;
+                }
 
-            // Position regular nodes left-to-right (in table order)
-            regularNodes.forEach(node => {
-                node.position({ x: nodeX, y: currentY });
-                nodeX += SPACING_X;
+                // Position regular nodes left-to-right (in table order)
+                regularNodes.forEach(node => {
+                    node.position({ x: nodeX, y: currentY });
+                    nodeX += SPACING_X;
+                });
+
+                // Move to next group (below) - add extra gap when needed
+                currentY += SPACING_Y + GROUP_GAP;
             });
+        } else {
+            // LR: Groups left-to-right, nodes top-to-bottom within groups
+            let currentX = 0;
 
-            // Move to next group (below) - add extra gap when needed
-            currentY += SPACING_Y + GROUP_GAP;
-        });
+            groupOrder.forEach(groupId => {
+                const regularNodes = groupNodes.get(groupId) || [];
+                const labelNode = labelNodes.get(groupId);
+
+                if (!labelNode && regularNodes.length === 0) return;
+
+                let nodeY = 0;
+
+                // Position label node first (at top)
+                if (labelNode) {
+                    labelNode.position({ x: currentX, y: nodeY });
+                    nodeY += SPACING_Y;
+                }
+
+                // Position regular nodes top-to-bottom (in table order)
+                regularNodes.forEach(node => {
+                    node.position({ x: currentX, y: nodeY });
+                    nodeY += SPACING_Y;
+                });
+
+                // Move to next group (right) - add extra gap when needed
+                currentX += SPACING_X + GROUP_GAP;
+            });
+        }
     };
 
     /**
@@ -1003,9 +1075,9 @@
 
         nodePositions.clear();
 
-        // Pre-layout with table order to bias dagre's within-rank ordering
+        // Pre-layout with table order and cross-axis arrangement
         // Use extra spacing when links hidden to prevent group overlap
-        setTableOrderPositions(currentHideLinks);
+        setTableOrderPositions(currentHideLinks, direction);
 
         const defaultOptions = {
             name: 'dagre',
@@ -1027,12 +1099,14 @@
 
             // Callbacks
             stop: function() {
+                // Rearrange nodes within groups on cross-axis for compact layout
+                // TB: nodes horizontal within groups, LR: nodes vertical within groups
+                rearrangeNodesWithinGroups(direction);
+
                 // Save positions after layout completes
                 cy.nodes('[!isGroup]').forEach(node => {
                     nodePositions.set(node.id(), { ...node.position() });
                 });
-                // Reposition labels to top-left of each group
-                repositionLabelsToTopLeft();
             }
         };
 
@@ -1045,6 +1119,214 @@
             console.warn('dagre layout failed, falling back to compact:', e.message);
             runLayout(direction || 'TB');
         }
+    };
+
+    /**
+     * Run Compact Vertical layout - brick wall with rows
+     * Groups arranged left-to-right in rows, wrapping to form square-ish shape
+     * Nodes horizontal within each group
+     */
+    const runCompactVerticalLayout = function() {
+        if (!cy) return;
+
+        nodePositions.clear();
+
+        const PADDING = NODE_PADDING;
+        const nodeH = calcNodeHeight();
+        const LABEL_HEIGHT = 28;  // Approximate label height including offset
+
+        const groupOrder = currentGroupOrder;
+        const orderedGroups = [];
+        groupOrder.forEach(groupId => {
+            const group = cy.getElementById(groupId);
+            if (group.length > 0 && group.data('isGroup')) {
+                orderedGroups.push(group);
+            }
+        });
+
+        if (orderedGroups.length === 0) return;
+
+        // Step 1: Calculate each group's dimensions when nodes are horizontal
+        const groupDims = orderedGroups.map(group => {
+            const children = group.children().filter(n => !n.data('isGroupLabel'));
+            let width = 0;
+            children.forEach(node => {
+                width += calcNodeWidth(node) + PADDING;
+            });
+            if (children.length > 0) width -= PADDING;
+            width += 6;  // compound padding
+            const height = nodeH + LABEL_HEIGHT + 6;  // node + label + compound padding
+            return { group, width: Math.max(width, 40), height, children };
+        });
+
+        // Step 2: Calculate target row width for square-ish shape
+        const totalWidth = groupDims.reduce((sum, g) => sum + g.width + GROUP_GAP, 0);
+        const avgHeight = groupDims.reduce((sum, g) => sum + g.height, 0) / groupDims.length;
+        const targetRowWidth = Math.sqrt(totalWidth * avgHeight);
+
+        // Step 3: Pack groups into rows (greedy algorithm)
+        const rows = [[]];
+        let currentRowWidth = 0;
+
+        groupDims.forEach(gd => {
+            if (currentRowWidth + gd.width > targetRowWidth && rows[rows.length - 1].length > 0) {
+                rows.push([]);
+                currentRowWidth = 0;
+            }
+            rows[rows.length - 1].push(gd);
+            currentRowWidth += gd.width + GROUP_GAP;
+        });
+
+        // Step 4: Arrange nodes within each group (horizontal)
+        groupDims.forEach(gd => {
+            let x = 0;
+            gd.children.forEach(node => {
+                const w = calcNodeWidth(node);
+                node.position({ x: x + w / 2, y: 0 });
+                x += w + PADDING;
+            });
+        });
+
+        // Reposition labels
+        repositionLabelsToTopLeft();
+
+        // Step 5: Position rows
+        let currentY = PADDING;
+
+        rows.forEach(row => {
+            let currentX = PADDING;
+            let rowHeight = 0;
+
+            row.forEach(gd => {
+                const allChildren = gd.group.children();
+                const bbox = allChildren.boundingBox({ includeOverlays: false });
+                rowHeight = Math.max(rowHeight, bbox.h);
+
+                const deltaX = currentX - bbox.x1;
+                const deltaY = currentY - bbox.y1;
+
+                allChildren.forEach(node => {
+                    const pos = node.position();
+                    node.position({ x: pos.x + deltaX, y: pos.y + deltaY });
+                });
+
+                currentX += bbox.w + GROUP_GAP;
+            });
+
+            currentY += rowHeight + GROUP_GAP;
+        });
+
+        // Save positions
+        cy.nodes('[!isGroup]').forEach(node => {
+            if (!node.data('isGroupLabel')) {
+                nodePositions.set(node.id(), { ...node.position() });
+            }
+        });
+
+        cy.fit(20);
+    };
+
+    /**
+     * Run Compact Horizontal layout - brick wall with columns
+     * Groups arranged top-to-bottom in columns, wrapping to form square-ish shape
+     * Nodes vertical within each group
+     */
+    const runCompactHorizontalLayout = function() {
+        if (!cy) return;
+
+        nodePositions.clear();
+
+        const PADDING = NODE_PADDING;
+        const nodeH = calcNodeHeight();
+        const LABEL_HEIGHT = 28;
+
+        const groupOrder = currentGroupOrder;
+        const orderedGroups = [];
+        groupOrder.forEach(groupId => {
+            const group = cy.getElementById(groupId);
+            if (group.length > 0 && group.data('isGroup')) {
+                orderedGroups.push(group);
+            }
+        });
+
+        if (orderedGroups.length === 0) return;
+
+        // Step 1: Calculate each group's dimensions when nodes are vertical
+        const groupDims = orderedGroups.map(group => {
+            const children = group.children().filter(n => !n.data('isGroupLabel'));
+            let maxWidth = 0;
+            children.forEach(node => {
+                maxWidth = Math.max(maxWidth, calcNodeWidth(node));
+            });
+            const width = maxWidth + 6;  // compound padding
+            const height = children.length * (nodeH + PADDING) - (children.length > 0 ? PADDING : 0) + LABEL_HEIGHT + 6;
+            return { group, width: Math.max(width, 40), height, children };
+        });
+
+        // Step 2: Calculate target column height for square-ish shape
+        const totalHeight = groupDims.reduce((sum, g) => sum + g.height + GROUP_GAP, 0);
+        const avgWidth = groupDims.reduce((sum, g) => sum + g.width, 0) / groupDims.length;
+        const targetColHeight = Math.sqrt(totalHeight * avgWidth);
+
+        // Step 3: Pack groups into columns (greedy algorithm)
+        const cols = [[]];
+        let currentColHeight = 0;
+
+        groupDims.forEach(gd => {
+            if (currentColHeight + gd.height > targetColHeight && cols[cols.length - 1].length > 0) {
+                cols.push([]);
+                currentColHeight = 0;
+            }
+            cols[cols.length - 1].push(gd);
+            currentColHeight += gd.height + GROUP_GAP;
+        });
+
+        // Step 4: Arrange nodes within each group (vertical)
+        groupDims.forEach(gd => {
+            let y = 0;
+            gd.children.forEach(node => {
+                node.position({ x: 0, y: y + nodeH / 2 });
+                y += nodeH + PADDING;
+            });
+        });
+
+        // Reposition labels
+        repositionLabelsToTopLeft();
+
+        // Step 5: Position columns
+        let currentX = PADDING;
+
+        cols.forEach(col => {
+            let currentY = PADDING;
+            let colWidth = 0;
+
+            col.forEach(gd => {
+                const allChildren = gd.group.children();
+                const bbox = allChildren.boundingBox({ includeOverlays: false });
+                colWidth = Math.max(colWidth, bbox.w);
+
+                const deltaX = currentX - bbox.x1;
+                const deltaY = currentY - bbox.y1;
+
+                allChildren.forEach(node => {
+                    const pos = node.position();
+                    node.position({ x: pos.x + deltaX, y: pos.y + deltaY });
+                });
+
+                currentY += bbox.h + GROUP_GAP;
+            });
+
+            currentX += colWidth + GROUP_GAP;
+        });
+
+        // Save positions
+        cy.nodes('[!isGroup]').forEach(node => {
+            if (!node.data('isGroupLabel')) {
+                nodePositions.set(node.id(), { ...node.position() });
+            }
+        });
+
+        cy.fit(20);
     };
 
     /**
@@ -1071,6 +1353,8 @@
     window.GraphApp.core.runAutoLayout = runAutoLayout;
     window.GraphApp.core.runFcoseLayout = runFcoseLayout;
     window.GraphApp.core.runDagreLayout = runDagreLayout;
+    window.GraphApp.core.runCompactVerticalLayout = runCompactVerticalLayout;
+    window.GraphApp.core.runCompactHorizontalLayout = runCompactHorizontalLayout;
     window.GraphApp.core.getCytoscapeZoom = getZoom;
     window.GraphApp.core.panCytoscape = pan;
     window.GraphApp.core.resetCytoscapeView = resetView;

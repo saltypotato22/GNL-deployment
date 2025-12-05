@@ -18,7 +18,7 @@
         const [errors, setErrors] = useState([]);
         const [settings, setSettings] = useState({
             direction: 'TB', // TB, BT, LR, or RL (used by compact layout)
-            layout: 'fcose', // fcose (smart), compact-TB, compact-LR
+            layout: 'smart', // smart, vertical, horizontal, compact-vertical, compact-horizontal
             zoom: 100,
             showTooltips: true,
             curve: 'basis' // basis (curved), linear (straight), or step (orthogonal)
@@ -36,15 +36,22 @@
         const [hideLinkedNodes, setHideLinkedNodes] = useState(false);
         const [hideLinks, setHideLinks] = useState(false);
         const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-        const [isPanning, setIsPanning] = useState(false);
         const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-        const [prevDirection, setPrevDirection] = useState('TB');
         const [prevHideUnlinked, setPrevHideUnlinked] = useState(false);
         const [tablePanelWidth, setTablePanelWidth] = useState(33); // Will be auto-calculated on load
         const [isResizing, setIsResizing] = useState(false);
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
         const [showDemoMenu, setShowDemoMenu] = useState(false);
+        const [infoPopup, setInfoPopup] = useState({ open: false, type: null, groupName: null, nodeIndex: null });
+        // Info popup position and size (draggable/resizable)
+        const [infoPopupPos, setInfoPopupPos] = useState({ x: 150, y: 100 });
+        const [infoPopupSize, setInfoPopupSize] = useState({ width: 800, height: 280 });
+        const [infoDragging, setInfoDragging] = useState(false);
+        const [infoResizing, setInfoResizing] = useState(false);
+        const infoDragStart = useRef({ x: 0, y: 0 });
+        // Original values for Cancel functionality
+        const [infoOriginal, setInfoOriginal] = useState({ groupInfo: '', nodeInfo: '', linkInfo: '' });
         const [selectedRowIndex, setSelectedRowIndex] = useState(null);
         const [currentFileName, setCurrentFileName] = useState('');
         const [colWidths, setColWidths] = useState({
@@ -97,8 +104,21 @@
         const [canUndo, setCanUndo] = useState(false);
         const [canRedo, setCanRedo] = useState(false);
 
+        // Controlled commit pattern for Group/Node inputs - prevents live merge bug
+        // Shape: { index: number, field: 'Group_xA' | 'Node_xA', value: string, originalValue: string }
+        const [editingCell, setEditingCell] = useState(null);
+
         // Track first render to auto-fit on load
         const isFirstRenderRef = useRef(true);
+
+        // Track if Info popup content was edited (for undo history)
+        const infoEditedRef = useRef(false);
+
+        // Ref for current nodes (for Escape handler to access latest state)
+        const nodesRef = useRef(nodes);
+
+        // Ref for fit-to-screen timeout (prevents race condition when renderDiagram called rapidly)
+        const fitToScreenTimeoutRef = useRef(null);
 
         // Keep refs in sync with state
         useEffect(() => {
@@ -112,6 +132,10 @@
         useEffect(() => {
             colWidthsRef.current = colWidths;
         }, [colWidths]);
+
+        useEffect(() => {
+            nodesRef.current = nodes;
+        }, [nodes]);
 
         // Close demo menu when clicking outside
         useEffect(() => {
@@ -155,6 +179,24 @@
                 }
             });
             return counts;
+        }, [nodes]);
+
+        // Detect groups where Group_Info has inconsistent values
+        const groupInfoInconsistencies = useMemo(() => {
+            const issues = new Set(); // Set of groupNames with inconsistent Group_Info
+            const groupValues = {};
+            nodes.forEach(node => {
+                const group = node.Group_xA;
+                if (!group) return;
+                if (!groupValues[group]) groupValues[group] = new Set();
+                groupValues[group].add(node.Group_Info || '');
+            });
+            Object.entries(groupValues).forEach(([group, values]) => {
+                if (values.size > 1) {
+                    issues.add(group);
+                }
+            });
+            return issues;
         }, [nodes]);
 
         // Calculate which groups have external references - O(n) with nodeIdMap
@@ -214,6 +256,43 @@
 
             return map;
         }, [errors, nodes, nodeIdMap]);
+
+        // Aggregate errors by group name - for collapsed group error indication
+        const groupErrorMap = useMemo(() => {
+            const map = {};
+            nodes.forEach((node, index) => {
+                if (!node.Group_xA) return;
+                if (!map[node.Group_xA]) {
+                    map[node.Group_xA] = { count: 0, errors: [] };
+                }
+                const rowErrors = errorRowMap[index];
+                if (rowErrors && rowErrors.length > 0) {
+                    map[node.Group_xA].count += rowErrors.length;
+                    map[node.Group_xA].errors.push(...rowErrors);
+                }
+            });
+            return map;
+        }, [nodes, errorRowMap]);
+
+        // Memoized filtered nodes for table display (collapsed groups show only first row)
+        const filteredTableRows = useMemo(() => {
+            return nodes.reduce((acc, node, index) => {
+                // Track if this is first row of a contiguous group cluster
+                const prevGroup = acc.length > 0 ? acc[acc.length - 1].node.Group_xA : null;
+                const isFirstOfCluster = prevGroup !== node.Group_xA;
+
+                // Show all rows if group is NOT collapsed
+                if (!collapsedGroups.has(node.Group_xA)) {
+                    acc.push({ node, index, isCollapsed: false, isFirstOfCluster });
+                } else {
+                    // If collapsed, only show FIRST node - O(1) lookup
+                    if (groupFirstIndex.get(node.Group_xA) === index) {
+                        acc.push({ node, index, isCollapsed: true, isFirstOfCluster });
+                    }
+                }
+                return acc;
+            }, []);
+        }, [nodes, collapsedGroups, groupFirstIndex]);
 
         // Load sample data on mount
         useEffect(() => {
@@ -412,17 +491,25 @@
         useEffect(() => {
             const handleEscape = (e) => {
                 if (e.key === 'Escape') {
+                    // Save info popup edits to history before closing
+                    if (infoEditedRef.current) {
+                        saveToHistory(nodesRef.current);
+                        infoEditedRef.current = false;
+                    }
                     setShowExportModal(false);
                     setDeleteConfirm(null);
                     setShowHelpModal(false);
                     setShowReadmeModal(false);
                     setLinkingMode({ active: false, targetRowIndex: null });
+                    setShowAIModal(false);
+                    setAiError('');
+                    setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
                 }
             };
 
             document.addEventListener('keydown', handleEscape);
             return () => document.removeEventListener('keydown', handleEscape);
-        }, []);
+        }, [saveToHistory]);
 
         // Compute column widths dynamically based on content
         useEffect(() => {
@@ -494,11 +581,16 @@
 
                 // Fit to screen on first render or major changes
                 if (needsFitToScreen) {
-                    setTimeout(() => {
+                    // Clear any pending fit-to-screen timeout (prevents race condition)
+                    if (fitToScreenTimeoutRef.current) {
+                        clearTimeout(fitToScreenTimeoutRef.current);
+                    }
+                    fitToScreenTimeoutRef.current = setTimeout(() => {
                         window.GraphApp.core.fitCytoscapeToScreen(40);
                         // Sync zoom state with actual Cytoscape zoom
                         const currentZoom = window.GraphApp.core.getCytoscapeZoom();
                         setSettings(prev => ({ ...prev, zoom: currentZoom }));
+                        fitToScreenTimeoutRef.current = null;
                     }, 350); // After layout animation completes
                 }
 
@@ -560,24 +652,10 @@
             }
         }, []);
 
-        // Pan controls - Cytoscape handles panning natively via drag
-        // These handlers are no-ops but kept for compatibility
-        const handleMouseDown = useCallback((e) => {
-            // Cytoscape handles pan via native drag
-        }, []);
-
-        const handleMouseMove = useCallback((e) => {
-            // Cytoscape handles pan via native drag
-        }, []);
-
-        const handleMouseUp = useCallback((e) => {
-            // Cytoscape handles pan via native drag
-        }, []);
-
         // Calculate optimal table width to fit all content without truncation
         const calculateOptimalTableWidth = useCallback(() => {
             // Sum fixed icon column widths (px)
-            const fixedColumnsWidth = 30 + 32 + 32 + 28 + 32 + 32; // Row#, Collapse, Visibility, Links, Duplicate, Delete
+            const fixedColumnsWidth = 30 + 32 + 32 + 28 + 32 + 32 + 32; // Row#, Collapse, Visibility, Links, Duplicate, Delete, Info
 
             // Use ref to get latest colWidths (avoids stale closure)
             const currentColWidths = colWidthsRef.current;
@@ -623,13 +701,6 @@
             }
         }, [nodes.length, calculateOptimalTableWidth]);
 
-        const handleMouseLeave = useCallback((e) => {
-            if (isPanning) {
-                setIsPanning(false);
-                e.currentTarget.style.cursor = 'grab';
-            }
-        }, [isPanning]);
-
         // File upload handler
         const handleFileUpload = useCallback(async (event) => {
             const file = event.target.files[0];
@@ -642,7 +713,7 @@
 
                 if (fileExt === 'xlsx' || fileExt === 'xls') {
                     importedNodes = await window.GraphApp.core.importExcel(file);
-                } else if (fileExt === 'csv') {
+                } else if (fileExt === 'csv' || fileExt === 'txt') {
                     importedNodes = await window.GraphApp.exports.importCSV(file);
                 } else if (fileExt === 'mmd') {
                     importedNodes = await window.GraphApp.exports.importMermaid(file);
@@ -685,7 +756,8 @@
                 Hidden_Node_xB: 0,
                 Hidden_Link_xB: 0,
                 Link_Label_xB: '',
-                Link_Arrow_xB: 'To'
+                Link_Arrow_xB: 'To',
+                Link_Info: ''
             };
 
             const newNodes = [...nodes, newNode];
@@ -846,7 +918,9 @@ IMPORTANT RULES:
                                     Link_Label_xB: node.Link_Label_xB || '',
                                     Hidden_Node_xB: 0,
                                     Hidden_Link_xB: 0,
-                                    Link_Arrow_xB: 'To'
+                                    Link_Arrow_xB: 'To',
+                                    Group_Info: '',
+                                    Node_Info: ''
                                 };
                                 newNodes.push(newNode);
                                 changes.push(`Added ${newNode.ID_xA}`);
@@ -961,18 +1035,30 @@ IMPORTANT RULES:
                 return 'Empty graph. Ready to create a new diagram.';
             }
 
-            // For small graphs (≤30 nodes), include full CSV
+            // For small graphs (≤30 nodes), include full CSV with all info fields
             if (nodeArray.length <= 30) {
-                const lines = ['Group_xA,Node_xA,ID_xA,Linked_Node_ID_xA,Link_Label_xB'];
+                const lines = ['Group_xA,Node_xA,ID_xA,Linked_Node_ID_xA,Link_Label_xB,Group_Info,Node_Info,Link_Info'];
                 nodeArray.forEach(n => {
-                    lines.push(`${n.Group_xA},${n.Node_xA},${n.ID_xA},${n.Linked_Node_ID_xA || ''},${n.Link_Label_xB || ''}`);
+                    // Escape commas and quotes in info fields
+                    const escapeCSV = (val) => {
+                        if (!val) return '';
+                        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                            return `"${val.replace(/"/g, '""')}"`;
+                        }
+                        return val;
+                    };
+                    lines.push(`${n.Group_xA},${n.Node_xA},${n.ID_xA},${n.Linked_Node_ID_xA || ''},${n.Link_Label_xB || ''},${escapeCSV(n.Group_Info)},${escapeCSV(n.Node_Info)},${escapeCSV(n.Link_Info)}`);
                 });
                 return `FULL GRAPH (${nodeArray.length} nodes):\n${lines.join('\n')}`;
             }
 
-            // For larger graphs, provide summary
+            // For larger graphs, provide summary with info field counts
             const summary = window.GraphApp.utils.generateContextSummary(nodeArray);
-            let ctx = `GRAPH SUMMARY: ${summary.totalNodes} nodes, ${summary.totalGroups} groups, ${summary.totalLinks} connections\n\nGROUPS:\n`;
+            const groupInfoCount = nodeArray.filter(n => n.Group_Info).length;
+            const nodeInfoCount = nodeArray.filter(n => n.Node_Info).length;
+            const linkInfoCount = nodeArray.filter(n => n.Link_Info).length;
+            let ctx = `GRAPH SUMMARY: ${summary.totalNodes} nodes, ${summary.totalGroups} groups, ${summary.totalLinks} connections\n`;
+            ctx += `INFO FIELDS: ${groupInfoCount} group info, ${nodeInfoCount} node info, ${linkInfoCount} link info\n\nGROUPS:\n`;
             summary.groups.forEach(g => {
                 const nodeList = g.nodeNames.join(', ') + (g.hasMore ? ', ...' : '');
                 ctx += `- ${g.name} (${g.nodeCount} nodes, ${g.linkCount} links): ${nodeList}\n`;
@@ -1157,6 +1243,44 @@ IMPORTANT RULES:
             }
         }, [aiDragging, aiResizing, handleAiDragMove, handleAiDragEnd]);
 
+        // Info popup drag/resize handlers
+        const handleInfoDragStart = useCallback((e) => {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            setInfoDragging(true);
+            infoDragStart.current = { x: e.clientX - infoPopupPos.x, y: e.clientY - infoPopupPos.y };
+            e.preventDefault();
+        }, [infoPopupPos]);
+
+        const handleInfoDragMove = useCallback((e) => {
+            if (infoDragging) {
+                const newX = Math.max(0, Math.min(window.innerWidth - infoPopupSize.width, e.clientX - infoDragStart.current.x));
+                const newY = Math.max(0, Math.min(window.innerHeight - infoPopupSize.height, e.clientY - infoDragStart.current.y));
+                setInfoPopupPos({ x: newX, y: newY });
+            }
+            if (infoResizing) {
+                const newWidth = Math.max(400, Math.min(1200, e.clientX - infoPopupPos.x));
+                const newHeight = Math.max(200, Math.min(600, e.clientY - infoPopupPos.y));
+                setInfoPopupSize({ width: newWidth, height: newHeight });
+            }
+        }, [infoDragging, infoResizing, infoPopupPos, infoPopupSize]);
+
+        const handleInfoDragEnd = useCallback(() => {
+            setInfoDragging(false);
+            setInfoResizing(false);
+        }, []);
+
+        // Attach global mouse handlers for info popup drag/resize
+        useEffect(() => {
+            if (infoDragging || infoResizing) {
+                window.addEventListener('mousemove', handleInfoDragMove);
+                window.addEventListener('mouseup', handleInfoDragEnd);
+                return () => {
+                    window.removeEventListener('mousemove', handleInfoDragMove);
+                    window.removeEventListener('mouseup', handleInfoDragEnd);
+                };
+            }
+        }, [infoDragging, infoResizing, handleInfoDragMove, handleInfoDragEnd]);
+
         // Save API settings to localStorage
         const saveAPISettings = useCallback(() => {
             try {
@@ -1274,7 +1398,10 @@ IMPORTANT RULES:
                 Hidden_Node_xB: nodeToDuplicate.Hidden_Node_xB,
                 Hidden_Link_xB: 0,
                 Link_Label_xB: '',  // NO label cloning
-                Link_Arrow_xB: nodeToDuplicate.Link_Arrow_xB
+                Link_Arrow_xB: nodeToDuplicate.Link_Arrow_xB,
+                Group_Info: nodeToDuplicate.Group_Info || '',  // Copy group info
+                Node_Info: '',  // Clear node info
+                Link_Info: ''  // Clear link info (new link gets new notes)
             };
 
             // Insert the duplicated row right after the original
@@ -1313,7 +1440,9 @@ IMPORTANT RULES:
                 Hidden_Node_xB: node.Hidden_Node_xB || 0,
                 Hidden_Link_xB: 0,
                 Link_Label_xB: '',  // NO labels
-                Link_Arrow_xB: node.Link_Arrow_xB || 'To'
+                Link_Arrow_xB: node.Link_Arrow_xB || 'To',
+                Group_Info: node.Group_Info || '',  // Copy group info
+                Node_Info: ''  // Clear node info
             }));
 
             // Find insertion point (after last node of the group)
@@ -1467,6 +1596,26 @@ IMPORTANT RULES:
             saveToHistory(newNodes);
         }, [nodes, collapsedGroups, saveToHistory]);
 
+        // Controlled commit helpers for Group/Node fields (prevents live merge bug)
+        const commitCellEdit = useCallback(() => {
+            if (!editingCell) return;
+
+            const { index, field, value, originalValue } = editingCell;
+            const trimmedValue = value.trim();
+
+            // Only commit if value actually changed
+            if (trimmedValue !== originalValue) {
+                handleCellEdit(index, field, trimmedValue);
+            }
+
+            setEditingCell(null);
+        }, [editingCell, handleCellEdit]);
+
+        const cancelCellEdit = useCallback(() => {
+            // Revert to original - just clear editing state (input will show node value again)
+            setEditingCell(null);
+        }, []);
+
         // Linking mode handlers
         const enterLinkMode = useCallback((rowIndex) => {
             setLinkingMode({ active: true, targetRowIndex: rowIndex });
@@ -1576,8 +1725,12 @@ IMPORTANT RULES:
         }, [nodes]);
 
         const handleExportExcel = useCallback(async () => {
-            await window.GraphApp.core.exportExcel(nodes, 'graph-data.xlsx');
-            setShowExportModal(false);
+            try {
+                await window.GraphApp.core.exportExcel(nodes, 'graph-data.xlsx');
+                setShowExportModal(false);
+            } catch (error) {
+                alert('Error exporting Excel: ' + error.message);
+            }
         }, [nodes]);
 
         const handleExportMermaid = useCallback(() => {
@@ -1672,6 +1825,39 @@ IMPORTANT RULES:
             setShowExportModal(false);
         }, [nodes]);
 
+        // TXT export handlers
+        const handleExportTXT = useCallback(() => {
+            window.GraphApp.exports.exportTXT(nodes, 'graph-data.txt');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleExportTXTCanvas = useCallback(() => {
+            window.GraphApp.exports.exportTXTCanvas(nodes, 'graph-canvas.txt');
+            setShowExportModal(false);
+        }, [nodes]);
+
+        // Clipboard handlers
+        const handleCopyToClipboard = useCallback(async () => {
+            const success = await window.GraphApp.exports.copyToClipboard(nodes);
+            if (success) {
+                // Brief visual feedback
+                alert('Copied to clipboard!');
+            } else {
+                alert('Failed to copy to clipboard');
+            }
+            setShowExportModal(false);
+        }, [nodes]);
+
+        const handleCopyToClipboardCanvas = useCallback(async () => {
+            const success = await window.GraphApp.exports.copyToClipboardCanvas(nodes);
+            if (success) {
+                alert('Copied to clipboard!');
+            } else {
+                alert('Failed to copy to clipboard');
+            }
+            setShowExportModal(false);
+        }, [nodes]);
+
         // Load demo by name
         const loadDemo = useCallback((demoName) => {
             const demos = window.GraphApp.data.demos;
@@ -1735,7 +1921,7 @@ IMPORTANT RULES:
                                     key: 'input',
                                     ref: fileInputRef,
                                     type: "file",
-                                    accept: ".csv,.xlsx,.xls,.mmd",
+                                    accept: ".csv,.xlsx,.xls,.mmd,.txt",
                                     onChange: handleFileUpload,
                                     className: "hidden"
                                 })
@@ -1873,26 +2059,26 @@ IMPORTANT RULES:
                                 const newLayout = e.target.value;
                                 setSettings({ ...settings, layout: newLayout });
                                 // Run appropriate layout algorithm
-                                if (newLayout === 'fcose') {
+                                if (newLayout === 'smart') {
                                     window.GraphApp.core.runFcoseLayout();
-                                } else if (newLayout === 'dagre-TB') {
-                                    window.GraphApp.core.runDagreLayout('TB');
-                                } else if (newLayout === 'dagre-LR') {
-                                    window.GraphApp.core.runDagreLayout('LR');
-                                } else if (newLayout === 'compact-TB') {
+                                } else if (newLayout === 'vertical') {
                                     window.GraphApp.core.runAutoLayout('TB');
-                                } else if (newLayout === 'compact-LR') {
+                                } else if (newLayout === 'horizontal') {
                                     window.GraphApp.core.runAutoLayout('LR');
+                                } else if (newLayout === 'compact-vertical') {
+                                    window.GraphApp.core.runCompactVerticalLayout();
+                                } else if (newLayout === 'compact-horizontal') {
+                                    window.GraphApp.core.runCompactHorizontalLayout();
                                 }
                             },
                             className: "px-2 py-1 text-xs border border-gray-300 rounded",
-                            title: "Layout algorithm - Smart minimizes edge crossings, Hierarchical for flow diagrams, Compact uses simple grid"
+                            title: "Layout algorithm - Smart for organic clustering, Vertical/Horizontal for strips, Compact for square-ish grid"
                         }, [
-                            React.createElement('option', { key: 'fcose', value: 'fcose' }, "◎ Smart Layout"),
-                            React.createElement('option', { key: 'dagre-tb', value: 'dagre-TB' }, "↓ Hierarchical"),
-                            React.createElement('option', { key: 'dagre-lr', value: 'dagre-LR' }, "→ Hierarchical"),
-                            React.createElement('option', { key: 'compact-tb', value: 'compact-TB' }, "⊞ Compact ↓"),
-                            React.createElement('option', { key: 'compact-lr', value: 'compact-LR' }, "⊞ Compact →")
+                            React.createElement('option', { key: 'smart', value: 'smart' }, "◎ Smart"),
+                            React.createElement('option', { key: 'vertical', value: 'vertical' }, "↓ Vertical"),
+                            React.createElement('option', { key: 'horizontal', value: 'horizontal' }, "→ Horizontal"),
+                            React.createElement('option', { key: 'compact-v', value: 'compact-vertical' }, "⊞ Compact ↓"),
+                            React.createElement('option', { key: 'compact-h', value: 'compact-horizontal' }, "⊞ Compact →")
                         ]),
 
                         React.createElement('div', {
@@ -1958,16 +2144,17 @@ IMPORTANT RULES:
                             React.createElement('button', {
                                 key: 'relayout-btn',
                                 onClick: () => {
-                                    if (settings.layout === 'fcose') {
+                                    // Re-run current layout to reset positions
+                                    if (settings.layout === 'smart') {
                                         window.GraphApp.core.runFcoseLayout();
-                                    } else if (settings.layout === 'dagre-TB') {
-                                        window.GraphApp.core.runDagreLayout('TB');
-                                    } else if (settings.layout === 'dagre-LR') {
-                                        window.GraphApp.core.runDagreLayout('LR');
-                                    } else if (settings.layout === 'compact-TB') {
+                                    } else if (settings.layout === 'vertical') {
                                         window.GraphApp.core.runAutoLayout('TB');
-                                    } else if (settings.layout === 'compact-LR') {
+                                    } else if (settings.layout === 'horizontal') {
                                         window.GraphApp.core.runAutoLayout('LR');
+                                    } else if (settings.layout === 'compact-vertical') {
+                                        window.GraphApp.core.runCompactVerticalLayout();
+                                    } else if (settings.layout === 'compact-horizontal') {
+                                        window.GraphApp.core.runCompactHorizontalLayout();
                                     }
                                 },
                                 className: "px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600",
@@ -2141,7 +2328,8 @@ IMPORTANT RULES:
                                 style: { width: `${colWidths.Link_Label_xB}px` }
                             }),
                             React.createElement('col', { key: 'col-duplicate', style: { width: '32px' } }), // Duplicate icon
-                            React.createElement('col', { key: 'col-actions', style: { width: '32px' } }) // Delete icon
+                            React.createElement('col', { key: 'col-actions', style: { width: '32px' } }), // Delete icon
+                            React.createElement('col', { key: 'col-info', style: { width: '32px' } }) // Info icon
                         ]),
                         React.createElement('thead', {
                             key: 'thead',
@@ -2240,34 +2428,41 @@ IMPORTANT RULES:
                                 React.createElement('th', {
                                     key: 'actions',
                                     className: "px-2 py-2 text-xs font-semibold text-center"
-                                }, '')
+                                }, ''),
+                                React.createElement('th', {
+                                    key: 'info',
+                                    className: "px-1 py-2 text-center",
+                                    title: "View/edit group or node info"
+                                }, React.createElement(Info, { size: 14, className: 'text-gray-400 mx-auto' }))
                             ])
                         ]),
                         React.createElement('tbody', { key: 'tbody' },
-                            // PERFORMANCE: Single-pass filter with O(1) lookups instead of O(n²)
-                            nodes.reduce((acc, node, index) => {
-                                // Track if this is first row of a contiguous group cluster
-                                const prevGroup = acc.length > 0 ? acc[acc.length - 1].node.Group_xA : null;
-                                const isFirstOfCluster = prevGroup !== node.Group_xA;
-
-                                // Show all rows if group is NOT collapsed
-                                if (!collapsedGroups.has(node.Group_xA)) {
-                                    acc.push({ node, index, isCollapsed: false, isFirstOfCluster });
-                                } else {
-                                    // If collapsed, only show FIRST node - O(1) lookup
-                                    if (groupFirstIndex.get(node.Group_xA) === index) {
-                                        acc.push({ node, index, isCollapsed: true, isFirstOfCluster });
-                                    }
-                                }
-                                return acc;
-                            }, []).map(({ node, index, isCollapsed, isFirstOfCluster }, filteredIndex) => {
+                            // PERFORMANCE: Use memoized filteredTableRows (computed only when nodes/collapsedGroups change)
+                            filteredTableRows.map(({ node, index, isCollapsed, isFirstOfCluster }, filteredIndex) => {
                                 // Original index preserved from reduce - no findIndex needed!
-                                const hasError = errorRowMap[index] && errorRowMap[index].length > 0;
+                                const hasRowError = errorRowMap[index] && errorRowMap[index].length > 0;
+                                const groupErrors = groupErrorMap[node.Group_xA];
+                                const hasGroupError = groupErrors && groupErrors.count > 0;
+
+                                // When collapsed: show error if ANY node in group has error
+                                // When expanded: show error only if THIS row has error
+                                const showError = isCollapsed ? hasGroupError : hasRowError;
+
+                                // Tooltip: when collapsed, show all group errors; when expanded, show row errors
+                                const errorTooltip = isCollapsed
+                                    ? (hasGroupError ? groupErrors.errors.join('; ') : '')
+                                    : (hasRowError ? errorRowMap[index].join('; ') : '');
+
+                                // Controlled commit pattern: determine if this cell is being edited
+                                const isEditingGroup = editingCell?.index === index && editingCell?.field === 'Group_xA';
+                                const isEditingNode = editingCell?.index === index && editingCell?.field === 'Node_xA';
+                                const groupDisplayValue = isEditingGroup ? editingCell.value : node.Group_xA;
+                                const nodeDisplayValue = isEditingNode ? editingCell.value : node.Node_xA;
 
                                 return React.createElement('tr', {
                                     key: index,
-                                    className: `border-b border-gray-200 ${hasError ? 'bg-red-100 hover:bg-red-200 border-l-4 border-l-red-500' : 'hover:bg-gray-50'}`,
-                                    title: hasError ? errorRowMap[index].join('; ') : ''
+                                    className: `border-b border-gray-200 ${showError ? 'bg-red-100 hover:bg-red-200 border-l-4 border-l-red-500' : 'hover:bg-gray-50'}`,
+                                    title: errorTooltip
                                 }, [
                                     React.createElement('td', {
                                         key: 'rownum',
@@ -2295,9 +2490,42 @@ IMPORTANT RULES:
                                         className: "px-1 py-1"
                                     }, React.createElement('input', {
                                         type: 'text',
-                                        value: node.Group_xA,
-                                        onChange: (e) => handleCellEdit(index, 'Group_xA', e.target.value),
-                                        onFocus: () => setSelectedRowIndex(index),
+                                        value: groupDisplayValue,
+                                        onChange: (e) => {
+                                            // Controlled commit: only update editing state, not data model
+                                            setEditingCell({
+                                                index,
+                                                field: 'Group_xA',
+                                                value: e.target.value,
+                                                originalValue: node.Group_xA
+                                            });
+                                        },
+                                        onFocus: () => {
+                                            setSelectedRowIndex(index);
+                                            // Initialize editing state if not already editing this cell
+                                            if (!isEditingGroup) {
+                                                setEditingCell({
+                                                    index,
+                                                    field: 'Group_xA',
+                                                    value: node.Group_xA,
+                                                    originalValue: node.Group_xA
+                                                });
+                                            }
+                                        },
+                                        onBlur: () => {
+                                            // Commit on blur
+                                            if (isEditingGroup) {
+                                                commitCellEdit();
+                                            }
+                                        },
+                                        onKeyDown: (e) => {
+                                            if (e.key === 'Enter') {
+                                                e.target.blur(); // Triggers commit via onBlur
+                                            } else if (e.key === 'Escape') {
+                                                cancelCellEdit();
+                                                // Stay focused per user preference (don't blur)
+                                            }
+                                        },
                                         title: isCollapsed ? `Editing this will rename all nodes in group "${node.Group_xA}"` : node.Group_xA,
                                         className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : (isFirstOfCluster ? 'font-bold border-gray-300' : 'border-gray-300')}`
                                     })),
@@ -2308,9 +2536,42 @@ IMPORTANT RULES:
                                         title: linkingMode.active ? (isCollapsed ? 'Expand group to link' : 'Click to link') : (isCollapsed ? 'Collapsed group' : '')
                                     }, isCollapsed ? null : React.createElement('input', {
                                         type: 'text',
-                                        value: node.Node_xA,
-                                        onChange: (e) => handleCellEdit(index, 'Node_xA', e.target.value),
-                                        onFocus: () => setSelectedRowIndex(index),
+                                        value: nodeDisplayValue,
+                                        onChange: (e) => {
+                                            // Controlled commit: only update editing state, not data model
+                                            setEditingCell({
+                                                index,
+                                                field: 'Node_xA',
+                                                value: e.target.value,
+                                                originalValue: node.Node_xA
+                                            });
+                                        },
+                                        onFocus: () => {
+                                            setSelectedRowIndex(index);
+                                            // Initialize editing state if not already editing this cell
+                                            if (!isEditingNode) {
+                                                setEditingCell({
+                                                    index,
+                                                    field: 'Node_xA',
+                                                    value: node.Node_xA,
+                                                    originalValue: node.Node_xA
+                                                });
+                                            }
+                                        },
+                                        onBlur: () => {
+                                            // Commit on blur
+                                            if (isEditingNode) {
+                                                commitCellEdit();
+                                            }
+                                        },
+                                        onKeyDown: (e) => {
+                                            if (e.key === 'Enter') {
+                                                e.target.blur(); // Triggers commit via onBlur
+                                            } else if (e.key === 'Escape') {
+                                                cancelCellEdit();
+                                                // Stay focused per user preference (don't blur)
+                                            }
+                                        },
                                         title: node.Node_xA,
                                         className: `px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 text-blue-700 font-semibold' : ''}`,
                                         readOnly: linkingMode.active
@@ -2371,6 +2632,13 @@ IMPORTANT RULES:
                                         type: 'text',
                                         value: node.Link_Label_xB || '',
                                         onChange: (e) => handleCellEdit(index, 'Link_Label_xB', e.target.value),
+                                        onBlur: (e) => {
+                                            // Trim whitespace on blur
+                                            const trimmed = e.target.value.trim();
+                                            if (trimmed !== node.Link_Label_xB) {
+                                                handleCellEdit(index, 'Link_Label_xB', trimmed);
+                                            }
+                                        },
                                         title: node.Link_Label_xB || '',
                                         className: "px-1 py-0.5 text-xs border border-gray-300 rounded table-input"
                                     })),
@@ -2403,7 +2671,51 @@ IMPORTANT RULES:
                                                 className: "text-xs font-bold"
                                             }, '*')
                                         ] : [])
-                                    ]))
+                                    ])),
+                                    // Info column
+                                    React.createElement('td', {
+                                        key: 'info',
+                                        className: "px-1 py-1 text-center"
+                                    }, (() => {
+                                        // Determine icon color based on collapsed state and info presence
+                                        let iconColor, tooltipText;
+                                        if (isCollapsed) {
+                                            // Show GROUP info icon
+                                            const firstNode = nodes.find(n => n.Group_xA === node.Group_xA);
+                                            const hasGroupInfo = firstNode && firstNode.Group_Info && firstNode.Group_Info.trim();
+                                            const hasInconsistency = groupInfoInconsistencies.has(node.Group_xA);
+                                            iconColor = hasInconsistency ? 'text-red-500'
+                                                      : hasGroupInfo ? 'text-gray-700'
+                                                      : 'text-gray-300';
+                                            tooltipText = hasInconsistency ? 'Group info (inconsistent values)' : 'Group info';
+                                        } else {
+                                            // Show NODE info icon - black if node OR link info filled
+                                            const hasNodeInfo = node.Node_Info && node.Node_Info.trim();
+                                            const hasLinkInfo = node.Link_Info && node.Link_Info.trim();
+                                            iconColor = (hasNodeInfo || hasLinkInfo) ? 'text-gray-700' : 'text-gray-300';
+                                            tooltipText = 'Node info';
+                                        }
+                                        return React.createElement('button', {
+                                            onClick: () => {
+                                                // Store original values for Cancel
+                                                const groupName = node.Group_xA;
+                                                const firstNodeOfGroup = nodes.find(n => n.Group_xA === groupName);
+                                                setInfoOriginal({
+                                                    groupInfo: firstNodeOfGroup?.Group_Info || '',
+                                                    nodeInfo: node.Node_Info || '',
+                                                    linkInfo: node.Link_Info || ''
+                                                });
+                                                setInfoPopup({
+                                                    open: true,
+                                                    type: isCollapsed ? 'group' : 'node',
+                                                    groupName: node.Group_xA,
+                                                    nodeIndex: index
+                                                });
+                                            },
+                                            className: `p-1 rounded hover:bg-gray-100 ${iconColor}`,
+                                            title: tooltipText
+                                        }, React.createElement(Info, { size: 14 }));
+                                    })())
                                 ]);
                             })
                         )
@@ -2418,16 +2730,11 @@ IMPORTANT RULES:
                     title: "Drag to resize panels"
                 }),
 
-                // Right panel - Canvas
+                // Right panel - Canvas (Cytoscape handles pan/zoom natively)
                 React.createElement('div', {
                     key: 'canvas-panel',
-                    className: `flex-1 bg-gray-50 overflow-auto custom-scrollbar relative ${isPanning ? 'panning' : ''}`,
-                    style: { cursor: isPanning ? 'grabbing' : 'grab' },
+                    className: 'flex-1 bg-gray-50 overflow-auto custom-scrollbar relative',
                     ref: canvasRef,
-                    onMouseDown: handleMouseDown,
-                    onMouseMove: handleMouseMove,
-                    onMouseUp: handleMouseUp,
-                    onMouseLeave: handleMouseLeave,
                     onWheel: handleWheel
                 }, [
                     isRendering && React.createElement('div', {
@@ -2486,6 +2793,20 @@ IMPORTANT RULES:
                         }, [
                             React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
                             React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                        ]),
+                        React.createElement('button', {
+                            key: 'txt', onClick: handleExportTXT,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "TXT")
+                        ]),
+                        React.createElement('button', {
+                            key: 'clipboard', onClick: handleCopyToClipboard,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-green-50 rounded border border-gray-200 hover:border-green-300"
+                        }, [
+                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Clipboard")
                         ]),
                         React.createElement('button', {
                             key: 'excel', onClick: handleExportExcel,
@@ -2549,6 +2870,20 @@ IMPORTANT RULES:
                         }, [
                             React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
                             React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                        ]),
+                        React.createElement('button', {
+                            key: 'txt', onClick: handleExportTXTCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                        }, [
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "TXT")
+                        ]),
+                        React.createElement('button', {
+                            key: 'clipboard', onClick: handleCopyToClipboardCanvas,
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-green-100 rounded border border-blue-200 hover:border-green-300"
+                        }, [
+                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Clipboard")
                         ]),
                         React.createElement('button', {
                             key: 'excel', onClick: handleExportExcelCanvas,
@@ -2794,6 +3129,279 @@ IMPORTANT RULES:
                     className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
                 }, "Close")
             ])),
+
+            // Info popup modal - 3-panel layout (Group | Node | Link) - movable/resizable, no blur
+            infoPopup.open && React.createElement('div', {
+                key: 'info-popup',
+                className: "fixed z-50",
+                style: {
+                    left: infoPopupPos.x,
+                    top: infoPopupPos.y,
+                    // Narrower width for group-only view
+                    width: infoPopup.type === 'group' ? Math.min(350, infoPopupSize.width) : infoPopupSize.width,
+                    height: infoPopupSize.height
+                },
+                onMouseDown: handleInfoDragStart
+            }, [
+                // Main popup content
+                React.createElement('div', {
+                    key: 'modal-content',
+                    className: "bg-white rounded-lg shadow-xl border border-gray-300 w-full h-full flex flex-col relative",
+                    style: { cursor: infoDragging ? 'grabbing' : 'grab' }
+                }, [
+                    // X button (Cancel - restores original values)
+                    React.createElement('button', {
+                        key: 'close-x',
+                        onClick: () => {
+                            // Restore original values (Cancel)
+                            const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                            const nodeIdx = infoPopup.nodeIndex;
+                            setNodes(prev => prev.map((node, i) => {
+                                let updated = { ...node };
+                                // Restore Group_Info for all nodes in the group
+                                if (node.Group_xA === groupName) {
+                                    updated.Group_Info = infoOriginal.groupInfo;
+                                }
+                                // Restore Node_Info and Link_Info for the specific node
+                                if (i === nodeIdx) {
+                                    updated.Node_Info = infoOriginal.nodeInfo;
+                                    updated.Link_Info = infoOriginal.linkInfo;
+                                }
+                                return updated;
+                            }));
+                            infoEditedRef.current = false;
+                            setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
+                        },
+                        className: "absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded z-10",
+                        title: "Cancel"
+                    }, React.createElement(X, { size: 14 })),
+
+                    // Panel grid - 1 column for group-only, 3 columns for full view
+                    React.createElement('div', {
+                        key: 'panels',
+                        className: infoPopup.type === 'group'
+                            ? "p-4 flex-1 min-h-0 flex flex-col"
+                            : "grid grid-cols-3 gap-3 p-4 flex-1 min-h-0"
+                    }, infoPopup.type === 'group' ? [
+                        // Group-only view (collapsed group) - no warning needed, it's obvious
+                        React.createElement('label', {
+                            key: 'group-label',
+                            className: "text-xs text-gray-500 mb-1"
+                        }, "Group Info"),
+                        React.createElement('div', {
+                            key: 'group-name',
+                            className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                            title: nodes[infoPopup.nodeIndex]?.Group_xA || ''
+                        }, nodes[infoPopup.nodeIndex]?.Group_xA || ''),
+                        // Inconsistency warning if applicable
+                        ...(groupInfoInconsistencies.has(nodes[infoPopup.nodeIndex]?.Group_xA) ? [
+                            React.createElement('div', {
+                                key: 'inconsistency-warning',
+                                className: "bg-red-100 text-red-700 px-2 py-1 rounded text-xs mb-2"
+                            }, "Inconsistent values - editing will sync")
+                        ] : []),
+                        React.createElement('textarea', {
+                            key: 'group-textarea',
+                            className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                            placeholder: 'Enter group description...',
+                            style: { cursor: 'text' },
+                            value: (() => {
+                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                const firstNode = nodes.find(n => n.Group_xA === groupName);
+                                return firstNode?.Group_Info || '';
+                            })(),
+                            onChange: (e) => {
+                                const value = e.target.value;
+                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                infoEditedRef.current = true;
+                                setNodes(prev => prev.map(node =>
+                                    node.Group_xA === groupName
+                                        ? { ...node, Group_Info: value }
+                                        : node
+                                ));
+                            }
+                        })
+                    ] : [
+                        // Full 3-panel view (expanded group)
+                        // Left panel: Group Info
+                        React.createElement('div', {
+                            key: 'group-panel',
+                            className: "flex flex-col min-h-0"
+                        }, [
+                            React.createElement('label', {
+                                key: 'group-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Group Info"),
+                            React.createElement('div', {
+                                key: 'group-name',
+                                className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                                title: nodes[infoPopup.nodeIndex]?.Group_xA || ''
+                            }, nodes[infoPopup.nodeIndex]?.Group_xA || ''),
+                            // Warning about editing entire group
+                            React.createElement('div', {
+                                key: 'group-warning',
+                                className: "bg-amber-50 text-amber-700 px-2 py-1 rounded text-xs mb-2 border border-amber-200"
+                            }, "Edits apply to entire group"),
+                            // Inconsistency warning if applicable
+                            ...(groupInfoInconsistencies.has(nodes[infoPopup.nodeIndex]?.Group_xA) ? [
+                                React.createElement('div', {
+                                    key: 'inconsistency-warning',
+                                    className: "bg-red-100 text-red-700 px-2 py-1 rounded text-xs mb-2"
+                                }, "Inconsistent values - editing will sync")
+                            ] : []),
+                            React.createElement('textarea', {
+                                key: 'group-textarea',
+                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                placeholder: 'Enter group description...',
+                                style: { cursor: 'text' },
+                                value: (() => {
+                                    const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                    const firstNode = nodes.find(n => n.Group_xA === groupName);
+                                    return firstNode?.Group_Info || '';
+                                })(),
+                                onChange: (e) => {
+                                    const value = e.target.value;
+                                    const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => prev.map(node =>
+                                        node.Group_xA === groupName
+                                            ? { ...node, Group_Info: value }
+                                            : node
+                                    ));
+                                }
+                            })
+                        ]),
+
+                        // Middle panel: Node Info
+                        React.createElement('div', {
+                            key: 'node-panel',
+                            className: "flex flex-col min-h-0"
+                        }, [
+                            React.createElement('label', {
+                                key: 'node-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Node Info"),
+                            React.createElement('div', {
+                                key: 'node-name',
+                                className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                                title: nodes[infoPopup.nodeIndex]?.Node_xA || ''
+                            }, nodes[infoPopup.nodeIndex]?.Node_xA || ''),
+                            React.createElement('textarea', {
+                                key: 'node-textarea',
+                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                placeholder: 'Enter node notes...',
+                                style: { cursor: 'text' },
+                                value: nodes[infoPopup.nodeIndex]?.Node_Info || '',
+                                onChange: (e) => {
+                                    const value = e.target.value;
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => prev.map((node, i) =>
+                                        i === infoPopup.nodeIndex
+                                            ? { ...node, Node_Info: value }
+                                            : node
+                                    ));
+                                }
+                            })
+                        ]),
+
+                        // Right panel: Link Info
+                        React.createElement('div', {
+                            key: 'link-panel',
+                            className: "flex flex-col min-h-0"
+                        }, [
+                            React.createElement('label', {
+                                key: 'link-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Link Info"),
+                            React.createElement('div', {
+                                key: 'link-target',
+                                className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                                title: nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA || 'No link'
+                            }, nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA
+                                ? `→ ${nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA}`
+                                : '(no link)'
+                            ),
+                            React.createElement('textarea', {
+                                key: 'link-textarea',
+                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                placeholder: 'Enter link notes...',
+                                style: { cursor: 'text' },
+                                value: nodes[infoPopup.nodeIndex]?.Link_Info || '',
+                                onChange: (e) => {
+                                    const value = e.target.value;
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => prev.map((node, i) =>
+                                        i === infoPopup.nodeIndex
+                                            ? { ...node, Link_Info: value }
+                                            : node
+                                    ));
+                                }
+                            })
+                        ])
+                    ]),
+
+                    // Footer with Save/Cancel buttons
+                    React.createElement('div', {
+                        key: 'footer',
+                        className: "flex justify-end gap-2 px-4 pb-3 pt-1"
+                    }, [
+                        React.createElement('button', {
+                            key: 'cancel-btn',
+                            onClick: () => {
+                                // Restore original values
+                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                const nodeIdx = infoPopup.nodeIndex;
+                                setNodes(prev => prev.map((node, i) => {
+                                    let updated = { ...node };
+                                    // Restore Group_Info for all nodes in the group
+                                    if (node.Group_xA === groupName) {
+                                        updated.Group_Info = infoOriginal.groupInfo;
+                                    }
+                                    // Restore Node_Info and Link_Info for the specific node
+                                    if (i === nodeIdx) {
+                                        updated.Node_Info = infoOriginal.nodeInfo;
+                                        updated.Link_Info = infoOriginal.linkInfo;
+                                    }
+                                    return updated;
+                                }));
+                                infoEditedRef.current = false;
+                                setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
+                            },
+                            className: "px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded",
+                            style: { cursor: 'pointer' }
+                        }, "Cancel"),
+                        React.createElement('button', {
+                            key: 'save-btn',
+                            onClick: () => {
+                                // Save changes to history
+                                if (infoEditedRef.current) {
+                                    saveToHistory(nodes);
+                                    infoEditedRef.current = false;
+                                }
+                                setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
+                            },
+                            className: "px-3 py-1.5 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded",
+                            style: { cursor: 'pointer' }
+                        }, "Save")
+                    ]),
+
+                    // Resize handle (bottom-right corner)
+                    React.createElement('div', {
+                        key: 'resize-handle',
+                        className: "absolute bottom-0 right-0 w-4 h-4 cursor-se-resize",
+                        onMouseDown: (e) => {
+                            e.stopPropagation();
+                            setInfoResizing(true);
+                        }
+                    }, React.createElement('svg', {
+                        className: "w-4 h-4 text-gray-400",
+                        viewBox: "0 0 16 16",
+                        fill: "currentColor"
+                    }, React.createElement('path', {
+                        d: "M14 14H10L14 10V14ZM14 8L8 14H6L14 6V8Z"
+                    })))
+                ])
+            ]),
 
             // Settings modal
             showSettingsModal && React.createElement('div', {

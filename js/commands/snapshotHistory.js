@@ -6,6 +6,9 @@
 (function(window) {
     'use strict';
 
+    // ===== Configuration Constants =====
+    const MAX_MEMORY_BYTES = 10 * 1024 * 1024; // 10MB history limit
+
     /**
      * Deep clone helper - uses structuredClone when available (faster)
      * Falls back to JSON for older browsers
@@ -57,7 +60,7 @@
             this.history = [];
             this.currentIndex = -1;
             this.maxHistory = maxHistory;
-            this.maxMemoryBytes = 10 * 1024 * 1024; // 10MB limit
+            this.maxMemoryBytes = MAX_MEMORY_BYTES;
         }
 
         /**

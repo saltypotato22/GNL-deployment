@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Slim Graph - Network Diagram Visualizer</title>
 
-    <!-- External Dependencies (pinned versions for security/stability) -->
+    <!-- External Dependencies (pinned versions for security/stability)
+         TODO: Add Subresource Integrity (SRI) hashes for enhanced security
+         See: https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
+         Note: Tailwind CDN (cdn.tailwindcss.com) doesn't support SRI as it's a JIT compiler -->
     <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>

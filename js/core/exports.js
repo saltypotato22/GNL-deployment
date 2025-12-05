@@ -7,6 +7,30 @@
     'use strict';
 
     /**
+     * Build CSV column list based on whether info columns have data
+     * @param {Array} nodes - Array of node objects
+     * @returns {Array} Column names for CSV export
+     */
+    const getCSVColumns = function(nodes) {
+        const hasAnyGroupInfo = nodes.some(n => n.Group_Info && n.Group_Info.trim());
+        const hasAnyNodeInfo = nodes.some(n => n.Node_Info && n.Node_Info.trim());
+        const hasAnyLinkInfo = nodes.some(n => n.Link_Info && n.Link_Info.trim());
+
+        const columns = [
+            'Group_xA',
+            'Node_xA',
+            'ID_xA',
+            'Linked_Node_ID_xA',
+            'Link_Label_xB'
+        ];
+        if (hasAnyGroupInfo) columns.push('Group_Info');
+        if (hasAnyNodeInfo) columns.push('Node_Info');
+        if (hasAnyLinkInfo) columns.push('Link_Info');
+
+        return columns;
+    };
+
+    /**
      * Convert foreignObject elements to native SVG text for canvas export
      * Preserves styling better than simple text extraction
      * @param {SVGElement} svgElement - The SVG element to process
@@ -83,20 +107,18 @@
 
     /**
      * Export nodes to CSV
+     * Smart export: only include Group_Info/Node_Info if any values exist
      * @param {Array} nodes - Array of node objects
      * @param {String} filename - Output filename
      */
     const exportCSV = function(nodes, filename) {
-        // Use PapaParse to generate CSV (slim 5-column format)
+        // Use helper to get smart column list
+        const columns = getCSVColumns(nodes);
+
+        // Use PapaParse to generate CSV
         const csv = Papa.unparse(nodes, {
             header: true,
-            columns: [
-                'Group_xA',
-                'Node_xA',
-                'ID_xA',
-                'Linked_Node_ID_xA',
-                'Link_Label_xB'
-            ]
+            columns: columns
         });
 
         // Download CSV
@@ -109,6 +131,57 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    };
+
+    /**
+     * Generate CSV string from nodes (reusable for TXT export and clipboard)
+     * Smart export: only include Group_Info/Node_Info if any values exist
+     * @param {Array} nodes - Array of node objects
+     * @returns {String} CSV-formatted string
+     */
+    const generateCSVString = function(nodes) {
+        // Use helper to get smart column list
+        const columns = getCSVColumns(nodes);
+
+        return Papa.unparse(nodes, {
+            header: true,
+            columns: columns
+        });
+    };
+
+    /**
+     * Export nodes to TXT (same format as CSV)
+     * @param {Array} nodes - Array of node objects
+     * @param {String} filename - Output filename
+     */
+    const exportTXT = function(nodes, filename) {
+        const txt = generateCSVString(nodes);
+        const blob = new Blob([txt], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'graph-data.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    /**
+     * Copy nodes to clipboard as CSV text
+     * Uses modern Clipboard API (96%+ browser support)
+     * @param {Array} nodes - Array of node objects
+     * @returns {Promise<boolean>} Success status
+     */
+    const copyToClipboard = async function(nodes) {
+        const csv = generateCSVString(nodes);
+        try {
+            await navigator.clipboard.writeText(csv);
+            return true;
+        } catch (err) {
+            console.error('Failed to copy to clipboard:', err);
+            return false;
+        }
     };
 
     /**
@@ -137,7 +210,10 @@
                             Hidden_Node_xB: parseInt(row.Hidden_Node_xB) || 0,
                             Hidden_Link_xB: parseInt(row.Hidden_Link_xB) || 0,
                             Link_Label_xB: row['Link_Label_xB'] || row['Link Label_xB'] || '',
-                            Link_Arrow_xB: row['Link_Arrow_xB'] || row['Link Arrow_xB'] || 'To'
+                            Link_Arrow_xB: row['Link_Arrow_xB'] || row['Link Arrow_xB'] || 'To',
+                            Group_Info: row.Group_Info || '',
+                            Node_Info: row.Node_Info || '',
+                            Link_Info: row.Link_Info || ''
                         };
                     });
 
@@ -1172,23 +1248,43 @@
         exportDOT(filteredNodes, filename || 'graph-canvas.dot', settings);
     };
 
+    /**
+     * Export visible nodes to TXT (canvas-filtered)
+     */
+    const exportTXTCanvas = function(nodes, filename) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        exportTXT(filteredNodes, filename || 'graph-canvas.txt');
+    };
+
+    /**
+     * Copy visible nodes to clipboard (canvas-filtered)
+     */
+    const copyToClipboardCanvas = async function(nodes) {
+        const filteredNodes = filterVisibleNodes(nodes);
+        return copyToClipboard(filteredNodes);
+    };
+
     // Expose to global namespace
     window.GraphApp.exports = {
         // Table exports (all rows)
         exportCSV,
         importCSV,
+        exportTXT,
         exportMermaid,
         importMermaid,
         exportJSON,
         exportGraphML,
         exportDOT,
         exportExcalidraw,
+        copyToClipboard,
         // Canvas exports (visible only)
         exportCSVCanvas,
+        exportTXTCanvas,
         exportJSONCanvas,
         exportGraphMLCanvas,
         exportDOTCanvas,
         exportExcalidrawCanvas,
+        copyToClipboardCanvas,
         filterVisibleNodes,
         // Image exports (always from canvas)
         exportPNG,

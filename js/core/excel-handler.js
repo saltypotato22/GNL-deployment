@@ -62,7 +62,10 @@
                 Hidden_Node_xB: parseInt(getColumnValue(row, 'Hidden_Node_xB', 'Hidden Node_xB')) || 0,
                 Hidden_Link_xB: parseInt(getColumnValue(row, 'Hidden_Link_xB', 'Hidden Link_xB')) || 0,
                 Link_Label_xB: getColumnValue(row, 'Link_Label_xB', 'Link Label_xB') || '',
-                Link_Arrow_xB: getColumnValue(row, 'Link_Arrow_xB', 'Link Arrow_xB') || 'To'
+                Link_Arrow_xB: getColumnValue(row, 'Link_Arrow_xB', 'Link Arrow_xB') || 'To',
+                Group_Info: getColumnValue(row, 'Group_Info') || '',
+                Node_Info: getColumnValue(row, 'Node_Info') || '',
+                Link_Info: getColumnValue(row, 'Link_Info') || ''
             };
 
             // Only add if row has data
@@ -94,6 +97,7 @@
 
     /**
      * Export nodes to Excel with formula preservation
+     * Smart export: only include Group_Info/Node_Info if any values exist
      * @param {Array} nodes - Array of node objects
      * @param {String} filename - Output filename
      */
@@ -101,14 +105,24 @@
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Sheet1');
 
-        // Add headers (slim 5-column format)
-        worksheet.addRow([
+        // Check if info columns have any non-empty values
+        const hasAnyGroupInfo = nodes.some(n => n.Group_Info && n.Group_Info.trim());
+        const hasAnyNodeInfo = nodes.some(n => n.Node_Info && n.Node_Info.trim());
+        const hasAnyLinkInfo = nodes.some(n => n.Link_Info && n.Link_Info.trim());
+
+        // Build headers dynamically (slim 5-column format + optional info columns)
+        const headers = [
             'Group_xA',
             'Node_xA',
             'ID_xA',
             'Linked Node ID_xA',
             'Link Label_xB'
-        ]);
+        ];
+        if (hasAnyGroupInfo) headers.push('Group_Info');
+        if (hasAnyNodeInfo) headers.push('Node_Info');
+        if (hasAnyLinkInfo) headers.push('Link_Info');
+
+        worksheet.addRow(headers);
 
         // Style header row
         const headerRow = worksheet.getRow(1);
@@ -131,13 +145,19 @@
         nodes.forEach((node, index) => {
             const rowNumber = index + 2; // +1 for header, +1 for 0-index
 
-            const row = worksheet.addRow([
+            // Build row data dynamically
+            const rowData = [
                 node.Group_xA,
                 node.Node_xA,
                 '', // Will be replaced with formula
                 '', // Will be set below with formula or value
                 node.Link_Label_xB || ''
-            ]);
+            ];
+            if (hasAnyGroupInfo) rowData.push(node.Group_Info || '');
+            if (hasAnyNodeInfo) rowData.push(node.Node_Info || '');
+            if (hasAnyLinkInfo) rowData.push(node.Link_Info || '');
+
+            const row = worksheet.addRow(rowData);
 
             // Set formula for ID_xA (column C)
             // Formula: =A2&"-"&B2

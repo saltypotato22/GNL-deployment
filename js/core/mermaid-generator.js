@@ -204,50 +204,8 @@
         return finalId;
     };
 
-    /**
-     * Clear ID cache (call before each render)
-     */
-    const clearIDCache = function() {
-        idCache.clear();
-    };
-
-    /**
-     * Render Mermaid diagram in container
-     * @param {String} mermaidSyntax - Mermaid diagram syntax
-     * @param {String} containerId - ID of container element
-     * @returns {Promise} Promise that resolves when rendering complete
-     */
-    const renderMermaid = async function(mermaidSyntax, containerId) {
-        const container = document.getElementById(containerId);
-        if (!container) {
-            throw new Error(`Container ${containerId} not found`);
-        }
-
-        // Clear container
-        container.innerHTML = '';
-
-        // Create temporary div for mermaid rendering
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = mermaidSyntax;
-        container.appendChild(div);
-
-        try {
-            // Render using Mermaid.js
-            await window.mermaid.run({
-                nodes: [div]
-            });
-
-            return true;
-        } catch (error) {
-            container.innerHTML = `<div class="text-red-500 p-4">Error rendering diagram: ${error.message}</div>`;
-            throw error;
-        }
-    };
-
     // Expose to global namespace
     window.GraphApp.core.generateMermaid = generateMermaid;
-    window.GraphApp.core.renderMermaid = renderMermaid;
     window.GraphApp.core.sanitizeID = sanitizeID;
 
 })(window);
