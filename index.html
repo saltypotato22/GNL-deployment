@@ -32,7 +32,20 @@
     <!-- Custom Styles -->
     <link rel="stylesheet" href="css/main.css">
 </head>
-<body>
+<body oncontextmenu="var c=document.getElementById('mermaid-container');if(c&&c.contains(event.target)){event.preventDefault();return false;}">
+    <!-- Prevent browser context menu on canvas area (must run early) -->
+    <script>
+        document.addEventListener('contextmenu', function(e) {
+            var container = document.getElementById('mermaid-container');
+            if (container && container.contains(e.target)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+            }
+        }, true);
+    </script>
+
     <!-- Skip link for keyboard navigation -->
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
@@ -67,12 +80,16 @@
 
     <!-- 4. Data -->
     <script src="js/data/sample-data.js"></script>
+    <script src="js/data/demos/quick-tour.js"></script>
+    <script src="js/data/demos/home-network.js"></script>
+    <script src="js/data/demos/industrial-wiring.js"></script>
 
     <!-- 5. Core modules -->
     <script src="js/core/mermaid-generator.js"></script>
     <script src="js/core/cytoscape-renderer.js"></script>
     <script src="js/core/excel-handler.js"></script>
     <script src="js/core/exports.js"></script>
+    <script src="js/core/skill-loader.js"></script>
 
     <!-- 6. Commands (undo/redo) -->
     <script src="js/commands/snapshotHistory.js"></script>

@@ -413,6 +413,43 @@
         };
     };
 
+    // === MUX Node Utilities ===
+
+    /**
+     * Check if node name ends with " MUX" (multiplexer/shared resource node)
+     * MUX nodes are cloned per destination group to avoid false visual bridges
+     * @param {String} nodeName - Node_xA value
+     * @returns {Boolean}
+     */
+    const isMuxNode = function(nodeName) {
+        return nodeName && nodeName.trim().endsWith(' MUX');
+    };
+
+    /**
+     * Generate clone ID for MUX node
+     * @param {String} originalID - Original node ID (e.g., "Power-24V Feed MUX")
+     * @param {String} connectedID - Connected node ID (e.g., "PLC Rack-Input 1")
+     * @returns {String} Clone ID (e.g., "Power-24V Feed MUX__mux__PLC Rack-Input 1")
+     */
+    const generateMuxCloneID = function(originalID, connectedID) {
+        return `${originalID}__mux__${connectedID}`;
+    };
+
+    /**
+     * Parse clone ID to extract original and connected IDs
+     * @param {String} cloneID
+     * @returns {Object|null} { originalID, connectedID } or null if not a clone
+     */
+    const parseMuxCloneID = function(cloneID) {
+        if (!cloneID) return null;
+        const idx = cloneID.indexOf('__mux__');
+        if (idx === -1) return null;
+        return {
+            originalID: cloneID.substring(0, idx),
+            connectedID: cloneID.substring(idx + 7)
+        };
+    };
+
     // Expose utilities to global namespace
     window.GraphApp.utils = {
         validateNodes,
@@ -423,7 +460,14 @@
         parseMermaidToNodes,
         measureTextPx,
         computeColumnWidths,
-        generateContextSummary
+        generateContextSummary,
+        isMuxNode,
+        generateMuxCloneID,
+        parseMuxCloneID,
+        // Legacy aliases (deprecated)
+        isAuxNode: isMuxNode,
+        generateAuxCloneID: generateMuxCloneID,
+        parseAuxCloneID: parseMuxCloneID
     };
 
 })(window);

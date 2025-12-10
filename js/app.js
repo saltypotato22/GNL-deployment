@@ -11,17 +11,22 @@
         const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
         // Get icons from namespace
-        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronRight, RotateCcw, RotateCw, Copy, Sparkles, Send, Settings, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
+        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ChevronRight, RotateCcw, RotateCw, Copy, Sparkles, Send, Settings, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
 
-        // State Management - Load sample data by default
-        const [nodes, setNodes] = useState(() => window.GraphApp.data.sample || []);
+        // State Management - Load first demo by default
+        const [nodes, setNodes] = useState(() => {
+            const demos = window.GraphApp.data.demos;
+            return demos['Quick Tour'] || Object.values(demos)[0] || [];
+        });
         const [errors, setErrors] = useState([]);
         const [settings, setSettings] = useState({
             direction: 'TB', // TB, BT, LR, or RL (used by compact layout)
             layout: 'smart', // smart, vertical, horizontal, compact-vertical, compact-horizontal
             zoom: 100,
             showTooltips: true,
-            curve: 'basis' // basis (curved), linear (straight), or step (orthogonal)
+            curve: 'basis', // basis (curved), linear (straight), or step (orthogonal)
+            curveAmount: 40, // 10-100, perpendicular distance for curve arc (only applies when curve='basis')
+            nodeSpacing: 0 // 0-100, extra spacing (5 levels: 0, 25, 50, 75, 100)
         });
         const [sortColumn, setSortColumn] = useState(null);
         const [sortDirection, setSortDirection] = useState('asc');
@@ -35,6 +40,7 @@
         const [hideUnlinkedNodes, setHideUnlinkedNodes] = useState(false);
         const [hideLinkedNodes, setHideLinkedNodes] = useState(false);
         const [hideLinks, setHideLinks] = useState(false);
+        const [hideLinkLabels, setHideLinkLabels] = useState(false);
         const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
         const [panStart, setPanStart] = useState({ x: 0, y: 0 });
         const [prevHideUnlinked, setPrevHideUnlinked] = useState(false);
@@ -46,12 +52,12 @@
         const [infoPopup, setInfoPopup] = useState({ open: false, type: null, groupName: null, nodeIndex: null });
         // Info popup position and size (draggable/resizable)
         const [infoPopupPos, setInfoPopupPos] = useState({ x: 150, y: 100 });
-        const [infoPopupSize, setInfoPopupSize] = useState({ width: 800, height: 280 });
+        const [infoPopupSize, setInfoPopupSize] = useState({ width: 900, height: 400 });
         const [infoDragging, setInfoDragging] = useState(false);
         const [infoResizing, setInfoResizing] = useState(false);
         const infoDragStart = useRef({ x: 0, y: 0 });
         // Original values for Cancel functionality
-        const [infoOriginal, setInfoOriginal] = useState({ groupInfo: '', nodeInfo: '', linkInfo: '' });
+        const [infoOriginal, setInfoOriginal] = useState({ groupInfo: '', nodeInfo: '', linkInfo: '', groupName: '', nodeName: '' });
         const [selectedRowIndex, setSelectedRowIndex] = useState(null);
         const [currentFileName, setCurrentFileName] = useState('');
         const [colWidths, setColWidths] = useState({
@@ -86,9 +92,24 @@
         const [aiResizing, setAiResizing] = useState(false);
         const aiDragStart = useRef({ x: 0, y: 0 });
 
+        // AI Skill state (custom or default system prompt)
+        const [currentSkill, setCurrentSkill] = useState({ content: '', isCustom: false, name: 'Default' });
+        const [skillLoading, setSkillLoading] = useState(true);
+
+        // Context menu state (right-click on group/node/edge in canvas)
+        const [contextMenu, setContextMenu] = useState({
+            open: false,
+            type: null,        // 'group' | 'node' | 'edge'
+            groupName: null,   // For groups
+            nodeId: null,      // For nodes
+            edgeData: null,    // For edges: { edgeId, sourceId, targetId }
+            position: { x: 0, y: 0 }
+        });
+
         // Refs
         const canvasRef = useRef(null);
         const fileInputRef = useRef(null);
+        const skillInputRef = useRef(null);
         const panOffsetRef = useRef({ x: 0, y: 0 });
         const zoomRef = useRef(100);
         const colWidthsRef = useRef(colWidths);
@@ -137,6 +158,22 @@
             nodesRef.current = nodes;
         }, [nodes]);
 
+        // Load AI skill on mount (custom from localStorage, or default from file)
+        useEffect(() => {
+            async function loadSkill() {
+                setSkillLoading(true);
+                try {
+                    const skill = await window.GraphApp.core.skillLoader.getCurrentSkill();
+                    setCurrentSkill(skill);
+                } catch (e) {
+                    console.error('Error loading skill:', e);
+                } finally {
+                    setSkillLoading(false);
+                }
+            }
+            loadSkill();
+        }, []);
+
         // Close demo menu when clicking outside
         useEffect(() => {
             if (!showDemoMenu) return;
@@ -148,6 +185,131 @@
             document.addEventListener('click', handleClick);
             return () => document.removeEventListener('click', handleClick);
         }, [showDemoMenu]);
+
+        // Connect window callback for group right-click (from Cytoscape) - opens info popup directly
+        useEffect(() => {
+            window.onGroupContextMenu = (data) => {
+                // Find the node index for this group
+                const nodeIndex = nodes.findIndex(n => n.Group_xA === data.groupName);
+                if (nodeIndex >= 0) {
+                    // Store original values for Cancel
+                    setInfoOriginal({
+                        groupInfo: nodes[nodeIndex].Group_Info || '',
+                        nodeInfo: '',
+                        linkInfo: '',
+                        groupName: data.groupName,
+                        nodeName: ''
+                    });
+                    // Set popup size and center in viewport
+                    const newWidth = 800, newHeight = 400;
+                    setInfoPopupSize({ width: newWidth, height: newHeight });
+                    setInfoPopupPos({
+                        x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                        y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                    });
+                    setInfoPopup({ open: true, type: 'group', groupName: data.groupName, nodeIndex });
+                }
+            };
+            return () => { window.onGroupContextMenu = null; };
+        }, [nodes]);
+
+        // Connect window callback for node right-click (from Cytoscape) - opens info popup directly
+        useEffect(() => {
+            window.onNodeContextMenu = (data) => {
+                const nodeIndex = nodes.findIndex(n => n.ID_xA === data.nodeId);
+                if (nodeIndex >= 0) {
+                    const node = nodes[nodeIndex];
+                    // Store original values for Cancel
+                    setInfoOriginal({
+                        groupInfo: node.Group_Info || '',
+                        nodeInfo: node.Node_Info || '',
+                        linkInfo: node.Link_Info || '',
+                        groupName: node.Group_xA || '',
+                        nodeName: node.Node_xA || ''
+                    });
+                    // Set popup size and center in viewport (smaller for single panel)
+                    const newWidth = 500, newHeight = 350;
+                    setInfoPopupSize({ width: newWidth, height: newHeight });
+                    setInfoPopupPos({
+                        x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                        y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                    });
+                    setInfoPopup({ open: true, type: 'node', groupName: node.Group_xA, nodeIndex });
+                }
+            };
+            return () => { window.onNodeContextMenu = null; };
+        }, [nodes]);
+
+        // Connect window callback for edge right-click (from Cytoscape) - opens info popup directly
+        useEffect(() => {
+            window.onEdgeContextMenu = (data) => {
+                // Find the source node (the one with the link)
+                const nodeIndex = nodes.findIndex(n =>
+                    n.ID_xA === data.sourceId && n.Linked_Node_ID_xA === data.targetId
+                );
+                if (nodeIndex >= 0) {
+                    const node = nodes[nodeIndex];
+                    // Store original values for Cancel
+                    setInfoOriginal({
+                        groupInfo: node.Group_Info || '',
+                        nodeInfo: node.Node_Info || '',
+                        linkInfo: node.Link_Info || '',
+                        groupName: node.Group_xA || '',
+                        nodeName: node.Node_xA || ''
+                    });
+                    // Set popup size and center in viewport (smaller for single panel)
+                    const newWidth = 500, newHeight = 350;
+                    setInfoPopupSize({ width: newWidth, height: newHeight });
+                    setInfoPopupPos({
+                        x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                        y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                    });
+                    setInfoPopup({ open: true, type: 'edge', groupName: node.Group_xA, nodeIndex });
+                }
+            };
+            return () => { window.onEdgeContextMenu = null; };
+        }, [nodes]);
+
+        // Prevent browser's native context menu on canvas (multiple layers of prevention)
+        useEffect(() => {
+            // Handler for document level
+            const preventContextMenu = (e) => {
+                const container = document.getElementById('mermaid-container');
+                const isCanvas = e.target.tagName === 'CANVAS';
+                const isInContainer = container && container.contains(e.target);
+                if (isCanvas || isInContainer) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    return false;
+                }
+            };
+
+            // Add to multiple targets for maximum coverage
+            document.addEventListener('contextmenu', preventContextMenu, true);
+            document.body.addEventListener('contextmenu', preventContextMenu, true);
+            window.addEventListener('contextmenu', preventContextMenu, true);
+
+            return () => {
+                document.removeEventListener('contextmenu', preventContextMenu, true);
+                document.body.removeEventListener('contextmenu', preventContextMenu, true);
+                window.removeEventListener('contextmenu', preventContextMenu, true);
+            };
+        }, []);
+
+        // Close context menu when clicking outside
+        useEffect(() => {
+            if (!contextMenu.open) return;
+            const handleClick = () => setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+            // Use setTimeout to avoid closing immediately on the same click that opened it
+            const timeout = setTimeout(() => {
+                document.addEventListener('click', handleClick);
+            }, 0);
+            return () => {
+                clearTimeout(timeout);
+                document.removeEventListener('click', handleClick);
+            };
+        }, [contextMenu.open]);
 
         // PERFORMANCE: O(1) lookup map for node IDs - used by multiple computations
         const nodeIdMap = useMemo(() => {
@@ -294,17 +456,18 @@
             }, []);
         }, [nodes, collapsedGroups, groupFirstIndex]);
 
-        // Load sample data on mount
+        // Load default demo on mount
         useEffect(() => {
-            const sampleNodes = window.GraphApp.data.sample;
-            setNodes(sampleNodes);
+            const demos = window.GraphApp.data.demos;
+            const defaultDemo = demos['Quick Tour'] || Object.values(demos)[0] || [];
+            setNodes(defaultDemo);
 
             // Validate on initial load
-            const validationErrors = window.GraphApp.utils.validateNodes(sampleNodes);
+            const validationErrors = window.GraphApp.utils.validateNodes(defaultDemo);
             setErrors(validationErrors);
 
             // Initialize history with first state
-            historyRef.current.push(sampleNodes);
+            historyRef.current.push(defaultDemo);
             setCanUndo(historyRef.current.canUndo());
             setCanRedo(historyRef.current.canRedo());
         }, []);
@@ -326,6 +489,166 @@
                 }
             });
             return { start, end };
+        }, [nodes]);
+
+        // Helper: Find all groups that share links with a given group (bidirectional)
+        const getLinkedGroups = useCallback((groupName) => {
+            const linkedGroups = new Set();
+
+            // Get all nodes in this group
+            const nodesInGroup = nodes.filter(n => n.Group_xA === groupName);
+            const nodeIDsInGroup = new Set(nodesInGroup.map(n => n.ID_xA));
+
+            // Find outgoing links (from this group to others)
+            nodesInGroup.forEach(node => {
+                if (node.Linked_Node_ID_xA) {
+                    const targetIndex = nodeIdMap.get(node.Linked_Node_ID_xA);
+                    if (targetIndex !== undefined) {
+                        const targetNode = nodes[targetIndex];
+                        if (targetNode.Group_xA !== groupName) {
+                            linkedGroups.add(targetNode.Group_xA);
+                        }
+                    }
+                }
+            });
+
+            // Find incoming links (from others to this group)
+            nodes.forEach(node => {
+                if (node.Linked_Node_ID_xA && nodeIDsInGroup.has(node.Linked_Node_ID_xA)) {
+                    if (node.Group_xA !== groupName) {
+                        linkedGroups.add(node.Group_xA);
+                    }
+                }
+            });
+
+            return linkedGroups;
+        }, [nodes, nodeIdMap]);
+
+        // Context menu action: Show linked groups (unhide them, keep others as-is)
+        const showLinkedGroups = useCallback((groupName) => {
+            const linked = getLinkedGroups(groupName);
+            setHiddenGroups(prev => {
+                const newHidden = new Set(prev);
+                newHidden.delete(groupName);  // Unhide clicked group
+                linked.forEach(g => newHidden.delete(g));  // Unhide linked
+                return newHidden;
+            });
+            setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+        }, [getLinkedGroups]);
+
+        // Context menu action: Show ONLY linked groups (hide all others)
+        const showOnlyLinkedGroups = useCallback((groupName) => {
+            const linked = getLinkedGroups(groupName);
+            const allGroups = new Set(nodes.map(n => n.Group_xA).filter(Boolean));
+
+            const newHidden = new Set();
+            allGroups.forEach(g => {
+                if (g !== groupName && !linked.has(g)) {
+                    newHidden.add(g);
+                }
+            });
+
+            setHiddenGroups(newHidden);
+            setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+        }, [getLinkedGroups, nodes]);
+
+        // Info popup action: Show linked groups (unhide them, keep popup open)
+        const showLinkedGroupsFromPopup = useCallback((groupName) => {
+            const linked = getLinkedGroups(groupName);
+            setHiddenGroups(prev => {
+                const newHidden = new Set(prev);
+                newHidden.delete(groupName);  // Unhide clicked group
+                linked.forEach(g => newHidden.delete(g));  // Unhide linked
+                return newHidden;
+            });
+            // Popup stays open - no setInfoPopup({ open: false })
+        }, [getLinkedGroups]);
+
+        // Info popup action: Show ONLY linked groups (hide all others, keep popup open)
+        const showOnlyLinkedGroupsFromPopup = useCallback((groupName) => {
+            const linked = getLinkedGroups(groupName);
+            const allGroups = new Set(nodes.map(n => n.Group_xA).filter(Boolean));
+
+            const newHidden = new Set();
+            allGroups.forEach(g => {
+                if (g !== groupName && !linked.has(g)) {
+                    newHidden.add(g);
+                }
+            });
+
+            setHiddenGroups(newHidden);
+            // Popup stays open - no setInfoPopup({ open: false })
+        }, [getLinkedGroups, nodes]);
+
+        // Context menu action: Show group info popup
+        const showGroupInfoFromContext = useCallback((groupName) => {
+            const nodeIndex = nodes.findIndex(n => n.Group_xA === groupName);
+            if (nodeIndex >= 0) {
+                // Store original values for Cancel
+                setInfoOriginal({
+                    groupInfo: nodes[nodeIndex].Group_Info || '',
+                    nodeInfo: '',
+                    linkInfo: ''
+                });
+                // Set popup size and center in viewport
+                const newWidth = 800, newHeight = 400;
+                setInfoPopupSize({ width: newWidth, height: newHeight });
+                setInfoPopupPos({
+                    x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                    y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                });
+                setInfoPopup({ open: true, type: 'group', groupName, nodeIndex });
+            }
+            setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+        }, [nodes]);
+
+        // Context menu action: Show node info popup (single panel)
+        const showNodeInfoFromContext = useCallback((nodeId) => {
+            const nodeIndex = nodes.findIndex(n => n.ID_xA === nodeId);
+            if (nodeIndex >= 0) {
+                const node = nodes[nodeIndex];
+                // Store original values for Cancel
+                setInfoOriginal({
+                    groupInfo: node.Group_Info || '',
+                    nodeInfo: node.Node_Info || '',
+                    linkInfo: node.Link_Info || ''
+                });
+                // Set popup size and center in viewport (smaller for single panel)
+                const newWidth = 500, newHeight = 350;
+                setInfoPopupSize({ width: newWidth, height: newHeight });
+                setInfoPopupPos({
+                    x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                    y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                });
+                setInfoPopup({ open: true, type: 'node', groupName: node.Group_xA, nodeIndex });
+            }
+            setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+        }, [nodes]);
+
+        // Context menu action: Show edge info popup (single panel)
+        const showEdgeInfoFromContext = useCallback((sourceId, targetId) => {
+            // Find the source node (the one with the link)
+            const nodeIndex = nodes.findIndex(n =>
+                n.ID_xA === sourceId && n.Linked_Node_ID_xA === targetId
+            );
+            if (nodeIndex >= 0) {
+                const node = nodes[nodeIndex];
+                // Store original values for Cancel
+                setInfoOriginal({
+                    groupInfo: node.Group_Info || '',
+                    nodeInfo: node.Node_Info || '',
+                    linkInfo: node.Link_Info || ''
+                });
+                // Set popup size and center in viewport (smaller for single panel)
+                const newWidth = 500, newHeight = 350;
+                setInfoPopupSize({ width: newWidth, height: newHeight });
+                setInfoPopupPos({
+                    x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                    y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                });
+                setInfoPopup({ open: true, type: 'edge', groupName: node.Group_xA, nodeIndex });
+            }
+            setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
         }, [nodes]);
 
         // Move row up handler
@@ -351,6 +674,9 @@
                 newNodes.splice(prevBounds.start, 0, ...currentGroup);
 
                 setNodes(newNodes);
+                // Re-validate so error highlights follow moved rows
+                const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                setErrors(validationErrors);
                 saveToHistory(newNodes);
                 setSelectedRowIndex(prevBounds.start); // Update selection to new position
             } else {
@@ -363,6 +689,9 @@
                     [newNodes[selectedRowIndex], newNodes[selectedRowIndex - 1]];
 
                 setNodes(newNodes);
+                // Re-validate so error highlights follow moved rows
+                const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                setErrors(validationErrors);
                 saveToHistory(newNodes);
                 setSelectedRowIndex(selectedRowIndex - 1);
             }
@@ -391,6 +720,9 @@
                 newNodes.splice(start, 0, ...nextGroup);
 
                 setNodes(newNodes);
+                // Re-validate so error highlights follow moved rows
+                const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                setErrors(validationErrors);
                 saveToHistory(newNodes);
                 setSelectedRowIndex(start + nextGroup.length); // Update selection
             } else {
@@ -403,6 +735,9 @@
                     [newNodes[selectedRowIndex + 1], newNodes[selectedRowIndex]];
 
                 setNodes(newNodes);
+                // Re-validate so error highlights follow moved rows
+                const validationErrors = window.GraphApp.utils.validateNodes(newNodes);
+                setErrors(validationErrors);
                 saveToHistory(newNodes);
                 setSelectedRowIndex(selectedRowIndex + 1);
             }
@@ -504,6 +839,7 @@
                     setShowAIModal(false);
                     setAiError('');
                     setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
+                    setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
                 }
             };
 
@@ -563,6 +899,9 @@
             }
 
             try {
+                // Set node spacing before rendering
+                window.GraphApp.core.setNodeSpacing(settings.nodeSpacing);
+
                 // Render using Cytoscape (incremental layout - existing nodes keep positions)
                 window.GraphApp.core.renderCytoscape(
                     nodes,
@@ -571,6 +910,7 @@
                     hideUnlinkedNodes,
                     hideLinkedNodes,
                     hideLinks,
+                    hideLinkLabels,
                     'mermaid-container'
                 );
 
@@ -600,7 +940,7 @@
                 setErrors(prev => [...prev, 'Failed to render diagram: ' + error.message]);
                 setIsRendering(false);
             }
-        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, prevHideUnlinked]);
+        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, prevHideUnlinked]);
 
         // PERFORMANCE: Debounce diagram rendering (300ms) - table stays responsive
         useEffect(() => {
@@ -611,7 +951,7 @@
                 return () => clearTimeout(timeoutId);
             }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [nodes, settings.direction, settings.curve, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks]);
+        }, [nodes, settings.direction, settings.curve, settings.curveAmount, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels]);
 
         // Zoom controls - use Cytoscape's built-in zoom
         const handleZoomIn = useCallback(() => {
@@ -782,59 +1122,9 @@
         // - Delta operations: ADD, DELETE, UPDATE, RENAME_GROUP, CONNECT, DISCONNECT
         // ============================================================================
 
-        /**
-         * AI System Prompt - Defines schema, operations, and conversation behavior
-         * {CONTEXT} placeholder is replaced with current graph state before each API call
-         */
-        const AI_SYSTEM_PROMPT = `You are a graph diagram assistant. You help users create, modify, and understand node-link diagrams.
-
-DATA SCHEMA:
-- Group_xA: Container/equipment name (e.g., "Router", "PLC Rack")
-- Node_xA: Item within the group (e.g., "WAN Port", "24V Feed")
-- ID_xA: Unique identifier in format "Group-Node" (auto-generated)
-- Linked_Node_ID_xA: Target node ID to connect to (format: "Group-Node")
-- Link_Label_xB: Optional connection label (e.g., "Ethernet", "F01-Red")
-
-CURRENT GRAPH:
-{CONTEXT}
-
-RESPONSE FORMATS:
-
-1. For SIMPLE changes (add/delete/rename/connect), use JSON operations:
-\`\`\`json
-{"operations": [...], "summary": "Brief description of changes"}
-\`\`\`
-
-Available operations:
-- ADD: {"op": "ADD", "nodes": [{"Group_xA": "...", "Node_xA": "...", "Linked_Node_ID_xA": "...", "Link_Label_xB": "..."}]}
-- DELETE: {"op": "DELETE", "ids": ["Group-Node1", "Group-Node2"]}
-- UPDATE: {"op": "UPDATE", "id": "Group-Node", "changes": {"Node_xA": "NewName", "Link_Label_xB": "NewLabel"}}
-- RENAME_GROUP: {"op": "RENAME_GROUP", "from": "OldGroup", "to": "NewGroup"}
-- CONNECT: {"op": "CONNECT", "from": "SourceGroup-Node", "to": "TargetGroup-Node", "label": "optional label"}
-- DISCONNECT: {"op": "DISCONNECT", "id": "Group-Node"}
-
-2. For NEW GRAPHS or COMPLEX transformations, output full CSV:
-\`\`\`csv
-Group_xA,Node_xA,Linked_Node_ID_xA,Link_Label_xB
-Router,WAN,,
-Router,LAN,Switch-Uplink,Ethernet
-...
-\`\`\`
-
-3. For QUESTIONS, EXPLANATIONS, or CONVERSATION, respond with plain text (no code blocks).
-
-WHEN TO ASK vs ACT:
-- ASK when the request is ambiguous (e.g., "add a server" - which group should it go in?)
-- ASK when multiple nodes could match (e.g., "rename Server" but 3 nodes contain "Server")
-- EXPLAIN when user asks about the graph (e.g., "what's connected to the router?")
-- CONFIRM before large deletions (5+ nodes) - describe what will be deleted and ask for confirmation
-- ACT directly when the request is clear and specific
-
-IMPORTANT RULES:
-- Every Linked_Node_ID_xA must reference an existing ID (format: "Group-Node")
-- When generating full CSV, every node needs its own row (even orphan nodes with no links)
-- If a node has multiple connections, include only the primary one
-- Be helpful and conversational - you can discuss the graph, suggest improvements, or answer questions`;
+        // AI System Prompt now loaded from skill-loader.js (default-skill.md or custom upload)
+        // See: js/skills/default-skill.md for the default prompt
+        // {CONTEXT} placeholder is replaced with current graph state before each API call
 
         /**
          * Parse AI response into structured format
@@ -1028,7 +1318,7 @@ IMPORTANT RULES:
          * - ≤30 nodes: Full CSV with all columns
          * - >30 nodes: Summary with group names, node counts, and sample nodes
          * @param {Array} nodeArray - Current node array
-         * @returns {string} Context string to inject into AI_SYSTEM_PROMPT
+         * @returns {string} Context string to inject into skill's {CONTEXT} placeholder
          */
         const buildContext = useCallback((nodeArray) => {
             if (!nodeArray || nodeArray.length === 0) {
@@ -1087,7 +1377,7 @@ IMPORTANT RULES:
 
                 // Inject current graph context into system prompt
                 const contextString = buildContext(nodes);
-                const systemPrompt = AI_SYSTEM_PROMPT.replace('{CONTEXT}', contextString);
+                const systemPrompt = currentSkill.content.replace('{CONTEXT}', contextString);
 
                 const response = await fetch('https://api.anthropic.com/v1/messages', {
                     method: 'POST',
@@ -1203,7 +1493,7 @@ IMPORTANT RULES:
             } finally {
                 setAiLoading(false);
             }
-        }, [apiKey, aiModel, aiPrompt, aiConversation, nodes, buildContext, parseAIResponse, applyDeltaOperations, saveToHistory]);
+        }, [apiKey, aiModel, aiPrompt, aiConversation, nodes, currentSkill, buildContext, parseAIResponse, applyDeltaOperations, saveToHistory]);
 
         // AI Modal drag/resize handlers - allow moving and resizing the chat window
         const handleAiDragStart = useCallback((e) => {
@@ -1303,6 +1593,59 @@ IMPORTANT RULES:
                 localStorage.removeItem('anthropic_api_key');
             } catch (e) {
                 console.warn('Could not clear localStorage:', e);
+            }
+        }, []);
+
+        // Upload custom skill file
+        const handleSkillUpload = useCallback(async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const content = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsText(file);
+                });
+
+                // Validate skill content
+                const validation = window.GraphApp.core.skillLoader.validateSkill(content);
+                if (!validation.valid) {
+                    alert('Invalid skill file:\n' + validation.errors.join('\n'));
+                    return;
+                }
+
+                // Save to localStorage
+                window.GraphApp.core.skillLoader.saveCustomSkill(content, file.name);
+
+                // Update state
+                setCurrentSkill({
+                    content: content,
+                    isCustom: true,
+                    name: file.name
+                });
+
+                // Reset file input
+                if (skillInputRef.current) {
+                    skillInputRef.current.value = '';
+                }
+
+            } catch (error) {
+                alert('Error reading skill file: ' + error.message);
+                console.error(error);
+            }
+        }, []);
+
+        // Reset to default skill
+        const resetToDefaultSkill = useCallback(async () => {
+            window.GraphApp.core.skillLoader.clearCustomSkill();
+
+            try {
+                const skill = await window.GraphApp.core.skillLoader.getCurrentSkill();
+                setCurrentSkill(skill);
+            } catch (e) {
+                console.error('Error resetting skill:', e);
             }
         }, []);
 
@@ -1470,13 +1813,18 @@ IMPORTANT RULES:
         }, [nodes, collapsedGroups, saveToHistory]);
 
         // Resize panel handlers
-        const handleResizeMouseDown = useCallback(() => {
+        const handleResizeMouseDown = useCallback((e) => {
+            e.preventDefault(); // Prevent text selection
             setIsResizing(true);
+            // Add class to body to prevent text selection during resize
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
         }, []);
 
         useEffect(() => {
             const handleMouseMove = (e) => {
                 if (!isResizing) return;
+                e.preventDefault(); // Prevent text selection during drag
                 const container = document.querySelector('.flex.overflow-hidden');
                 if (!container) return;
                 const newWidth = (e.clientX / container.clientWidth) * 100;
@@ -1485,14 +1833,23 @@ IMPORTANT RULES:
 
             const handleMouseUp = () => {
                 setIsResizing(false);
+                // Remove body styles
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
             };
 
             if (isResizing) {
                 document.addEventListener('mousemove', handleMouseMove);
                 document.addEventListener('mouseup', handleMouseUp);
+                // Also listen for mouseleave on window to catch edge cases
+                window.addEventListener('blur', handleMouseUp);
                 return () => {
                     document.removeEventListener('mousemove', handleMouseMove);
                     document.removeEventListener('mouseup', handleMouseUp);
+                    window.removeEventListener('blur', handleMouseUp);
+                    // Ensure cleanup on unmount
+                    document.body.style.userSelect = '';
+                    document.body.style.cursor = '';
                 };
             }
         }, [isResizing]);
@@ -1708,6 +2065,11 @@ IMPORTANT RULES:
             setHideLinks(!hideLinks);
         }, [hideLinks]);
 
+        // Toggle hide/show link labels (independent of link visibility)
+        const toggleHideLinkLabels = useCallback(() => {
+            setHideLinkLabels(!hideLinkLabels);
+        }, [hideLinkLabels]);
+
         // Sort table
         const handleSort = useCallback((column) => {
             const newDirection = sortColumn === column && sortDirection === 'asc' ? 'desc' : 'asc';
@@ -1861,7 +2223,7 @@ IMPORTANT RULES:
         // Load demo by name
         const loadDemo = useCallback((demoName) => {
             const demos = window.GraphApp.data.demos;
-            const demoData = demos[demoName] || window.GraphApp.data.sample;
+            const demoData = demos[demoName] || Object.values(demos)[0] || [];
 
             // Clear Cytoscape positions for fresh layout on new demo
             window.GraphApp.core.clearCytoscapePositions();
@@ -1955,6 +2317,31 @@ IMPORTANT RULES:
                                     "AI Generate"
                                 ])
                             ] : [])
+                        ]),
+
+                        // Undo/Redo buttons
+                        React.createElement('div', {
+                            key: 'undo-redo',
+                            className: "flex gap-0.5"
+                        }, [
+                            React.createElement('button', {
+                                key: 'undo',
+                                onClick: handleUndo,
+                                disabled: !canUndo,
+                                className: canUndo
+                                    ? "p-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                                    : "p-1.5 text-gray-300 cursor-not-allowed",
+                                title: "Undo (Ctrl+Z)"
+                            }, React.createElement(RotateCcw, { size: 16 })),
+                            React.createElement('button', {
+                                key: 'redo',
+                                onClick: handleRedo,
+                                disabled: !canRedo,
+                                className: canRedo
+                                    ? "p-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                                    : "p-1.5 text-gray-300 cursor-not-allowed",
+                                title: "Redo (Ctrl+Shift+Z)"
+                            }, React.createElement(RotateCw, { size: 16 }))
                         ]),
 
                         React.createElement('div', {
@@ -2057,7 +2444,9 @@ IMPORTANT RULES:
                             value: settings.layout,
                             onChange: (e) => {
                                 const newLayout = e.target.value;
-                                setSettings({ ...settings, layout: newLayout });
+                                // Reset spacing to 0 when layout changes
+                                setSettings({ ...settings, layout: newLayout, nodeSpacing: 0 });
+                                window.GraphApp.core.setNodeSpacing(0);
                                 // Run appropriate layout algorithm
                                 if (newLayout === 'smart') {
                                     window.GraphApp.core.runFcoseLayout();
@@ -2086,16 +2475,44 @@ IMPORTANT RULES:
                             className: "w-px h-6 bg-gray-300"
                         }),
 
-                        // Edge Style selector
-                        React.createElement('select', {
-                            key: 'curve-selector',
-                            value: settings.curve,
-                            onChange: (e) => setSettings({ ...settings, curve: e.target.value }),
-                            className: "px-2 py-1 text-xs border border-gray-300 rounded",
-                            title: "Edge style"
+                        // Edge Style selector with curve amount control
+                        React.createElement('div', {
+                            key: 'curve-controls',
+                            className: "flex items-center gap-0.5"
                         }, [
-                            React.createElement('option', { key: 'basis', value: 'basis' }, "⌇ Curved"),
-                            React.createElement('option', { key: 'linear', value: 'linear' }, "⟋ Straight")
+                            React.createElement('select', {
+                                key: 'curve-selector',
+                                value: settings.curve,
+                                onChange: (e) => setSettings({ ...settings, curve: e.target.value }),
+                                className: "px-2 py-1 text-xs border border-gray-300 rounded-l",
+                                title: "Edge style"
+                            }, [
+                                React.createElement('option', { key: 'basis', value: 'basis' }, "⌇ Curved"),
+                                React.createElement('option', { key: 'linear', value: 'linear' }, "⟋ Straight")
+                            ]),
+                            // Tiny up/down controls (only show when curved)
+                            ...(settings.curve === 'basis' ? [
+                                React.createElement('div', {
+                                    key: 'curve-amount-controls',
+                                    className: "flex flex-col border border-l-0 border-gray-300 rounded-r bg-white",
+                                    title: `Curve amount: ${settings.curveAmount}px (10-100)`
+                                }, [
+                                    React.createElement('button', {
+                                        key: 'curve-up',
+                                        onClick: () => setSettings({ ...settings, curveAmount: Math.min(100, settings.curveAmount + 10) }),
+                                        disabled: settings.curveAmount >= 100,
+                                        className: "px-0.5 h-3 hover:bg-gray-100 disabled:opacity-30 flex items-center justify-center",
+                                        title: "Increase curve"
+                                    }, React.createElement(ChevronUp, { size: 10 })),
+                                    React.createElement('button', {
+                                        key: 'curve-down',
+                                        onClick: () => setSettings({ ...settings, curveAmount: Math.max(10, settings.curveAmount - 10) }),
+                                        disabled: settings.curveAmount <= 10,
+                                        className: "px-0.5 h-3 hover:bg-gray-100 disabled:opacity-30 flex items-center justify-center",
+                                        title: "Decrease curve"
+                                    }, React.createElement(ChevronDown, { size: 10 }))
+                                ])
+                            ] : [])
                         ]),
 
                         React.createElement('div', {
@@ -2160,6 +2577,51 @@ IMPORTANT RULES:
                                 className: "px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600",
                                 title: "Re-arrange nodes using current layout"
                             }, "Re-layout"),
+                            // Node spacing control - circular icon with 5 levels (rollover)
+                            React.createElement('button', {
+                                key: 'spacing-control',
+                                onClick: () => {
+                                    // Cycle through 5 levels: 0 -> 25 -> 50 -> 75 -> 100 -> 0
+                                    const levels = [0, 25, 50, 75, 100];
+                                    const currentIndex = levels.indexOf(settings.nodeSpacing);
+                                    const nextIndex = (currentIndex + 1) % levels.length;
+                                    const newVal = levels[nextIndex];
+                                    setSettings({ ...settings, nodeSpacing: newVal });
+                                    window.GraphApp.core.setNodeSpacing(newVal);
+                                    // Auto re-layout to apply spacing immediately
+                                    if (settings.layout === 'smart') {
+                                        window.GraphApp.core.runFcoseLayout();
+                                    } else if (settings.layout === 'vertical') {
+                                        window.GraphApp.core.runAutoLayout('TB');
+                                    } else if (settings.layout === 'horizontal') {
+                                        window.GraphApp.core.runAutoLayout('LR');
+                                    } else if (settings.layout === 'compact-vertical') {
+                                        window.GraphApp.core.runCompactVerticalLayout();
+                                    } else if (settings.layout === 'compact-horizontal') {
+                                        window.GraphApp.core.runCompactHorizontalLayout();
+                                    }
+                                },
+                                className: "w-6 h-6 rounded-full border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center",
+                                title: `Node spacing: ${settings.nodeSpacing}% (click to cycle: 0→25→50→75→100→0)`
+                            },
+                                // Circle SVG - size varies with spacing level
+                                React.createElement('svg', {
+                                    key: 'spacing-icon',
+                                    width: 16,
+                                    height: 16,
+                                    viewBox: '0 0 16 16'
+                                }, React.createElement('circle', {
+                                    cx: 8,
+                                    cy: 8,
+                                    r: settings.nodeSpacing === 0 ? 2 :
+                                       settings.nodeSpacing === 25 ? 3 :
+                                       settings.nodeSpacing === 50 ? 4 :
+                                       settings.nodeSpacing === 75 ? 5 : 6,
+                                    fill: settings.nodeSpacing === 0 ? '#9CA3AF' : '#3B82F6',
+                                    stroke: settings.nodeSpacing === 0 ? '#6B7280' : '#2563EB',
+                                    strokeWidth: 1
+                                }))
+                            ),
                             React.createElement('button', {
                                 key: 'hide-unlinked',
                                 onClick: toggleHideUnlinked,
@@ -2186,6 +2648,15 @@ IMPORTANT RULES:
                             }, [
                                 React.createElement(hideLinks ? Eye : EyeOff, { key: 'icon', size: 12 }),
                                 hideLinks ? 'Show Links' : 'Hide Links'
+                            ]),
+                            React.createElement('button', {
+                                key: 'hide-link-labels',
+                                onClick: toggleHideLinkLabels,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkLabels ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                title: hideLinkLabels ? "Show link labels" : "Hide link labels from canvas"
+                            }, [
+                                React.createElement(hideLinkLabels ? Eye : EyeOff, { key: 'icon', size: 12 }),
+                                hideLinkLabels ? 'Show Labels' : 'Hide Labels'
                             ]),
                             // Filename display (unobtrusive, only shown when file is loaded)
                             ...(currentFileName ? [
@@ -2415,12 +2886,18 @@ IMPORTANT RULES:
                                 ] : []),
                                 React.createElement('th', {
                                     key: 'linked',
-                                    className: "px-1 py-2 text-xs font-semibold text-left th-separator"
-                                }, "Linked To"),
+                                    className: "px-1 py-1 text-xs font-semibold text-left th-separator"
+                                }, React.createElement('div', { className: "flex flex-col leading-none" }, [
+                                    React.createElement('span', { key: 'l1' }, "Linked"),
+                                    React.createElement('span', { key: 'l2' }, "To")
+                                ])),
                                 React.createElement('th', {
                                     key: 'label',
-                                    className: "px-1 py-2 text-xs font-semibold text-left th-separator"
-                                }, "Label"),
+                                    className: "px-1 py-1 text-xs font-semibold text-left th-separator"
+                                }, React.createElement('div', { className: "flex flex-col leading-none" }, [
+                                    React.createElement('span', { key: 'l1' }, "Link"),
+                                    React.createElement('span', { key: 'l2' }, "Label")
+                                ])),
                                 React.createElement('th', {
                                     key: 'duplicate',
                                     className: "px-2 py-2 text-xs font-semibold text-center"
@@ -2705,9 +3182,18 @@ IMPORTANT RULES:
                                                     nodeInfo: node.Node_Info || '',
                                                     linkInfo: node.Link_Info || ''
                                                 });
+                                                // Set popup size and center in viewport
+                                                const newWidth = isCollapsed ? 800 : 900;
+                                                const newHeight = 400;
+                                                setInfoPopupSize({ width: newWidth, height: newHeight });
+                                                setInfoPopupPos({
+                                                    x: Math.max(50, (window.innerWidth - newWidth) / 2),
+                                                    y: Math.max(50, (window.innerHeight - newHeight) / 2)
+                                                });
                                                 setInfoPopup({
                                                     open: true,
-                                                    type: isCollapsed ? 'group' : 'node',
+                                                    // 'group' for collapsed rows (single panel), null for full 3-panel view
+                                                    type: isCollapsed ? 'group' : null,
                                                     groupName: node.Group_xA,
                                                     nodeIndex: index
                                                 });
@@ -2750,7 +3236,8 @@ IMPORTANT RULES:
                     React.createElement('div', {
                         key: 'mermaid',
                         id: 'mermaid-container',
-                        className: "w-full h-full flex items-center justify-center p-4"
+                        className: "w-full h-full flex items-center justify-center p-4",
+                        onContextMenu: (e) => e.preventDefault()
                     })
                 ])
             ]),
@@ -3130,15 +3617,92 @@ IMPORTANT RULES:
                 }, "Close")
             ])),
 
-            // Info popup modal - 3-panel layout (Group | Node | Link) - movable/resizable, no blur
+            // Unified context menu (right-click on group/node/edge in canvas)
+            contextMenu.open && (() => {
+                const isGroup = contextMenu.type === 'group';
+                const isNode = contextMenu.type === 'node';
+                const isEdge = contextMenu.type === 'edge';
+                const linkedGroups = isGroup ? getLinkedGroups(contextMenu.groupName) : new Set();
+                const hasLinkedGroups = linkedGroups.size > 0;
+
+                // Determine header text based on type
+                const headerText = isGroup ? contextMenu.groupName
+                    : isNode ? contextMenu.nodeId
+                    : (contextMenu.edgeData?.sourceId + ' → ' + contextMenu.edgeData?.targetId);
+
+                return React.createElement('div', {
+                    key: 'context-menu',
+                    className: "fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-48",
+                    style: {
+                        left: contextMenu.position.x,
+                        top: contextMenu.position.y
+                    },
+                    onClick: (e) => e.stopPropagation(),  // Prevent immediate close
+                    onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); }  // Prevent browser menu on popup
+                }, [
+                    // Menu header (varies by type)
+                    React.createElement('div', {
+                        key: 'header',
+                        className: "px-3 py-1.5 text-xs text-gray-500 border-b border-gray-100 truncate max-w-64"
+                    }, headerText),
+
+                    // Group-specific: If no linked groups, show message
+                    isGroup && !hasLinkedGroups && React.createElement('div', {
+                        key: 'no-links',
+                        className: "px-3 py-2 text-sm text-gray-400 italic"
+                    }, "No linked groups"),
+
+                    // Group-specific: Show Linked Groups (only if has linked groups)
+                    isGroup && hasLinkedGroups && React.createElement('button', {
+                        key: 'show-linked',
+                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        onClick: () => showLinkedGroups(contextMenu.groupName)
+                    }, [
+                        React.createElement(Eye, { key: 'icon', size: 14 }),
+                        "Show Linked Groups"
+                    ]),
+
+                    // Group-specific: Show ONLY Linked Groups (only if has linked groups)
+                    isGroup && hasLinkedGroups && React.createElement('button', {
+                        key: 'show-only-linked',
+                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        onClick: () => showOnlyLinkedGroups(contextMenu.groupName)
+                    }, [
+                        React.createElement(EyeOff, { key: 'icon', size: 14 }),
+                        "Show ONLY Linked Groups"
+                    ]),
+
+                    // Separator (for groups with options, or always for node/edge)
+                    (isGroup || isNode || isEdge) && React.createElement('div', {
+                        key: 'separator',
+                        className: "border-t border-gray-100 my-1"
+                    }),
+
+                    // Show Info - available for all types, calls appropriate function
+                    React.createElement('button', {
+                        key: 'show-info',
+                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        onClick: () => {
+                            if (isGroup) showGroupInfoFromContext(contextMenu.groupName);
+                            else if (isNode) showNodeInfoFromContext(contextMenu.nodeId);
+                            else if (isEdge) showEdgeInfoFromContext(contextMenu.edgeData.sourceId, contextMenu.edgeData.targetId);
+                        }
+                    }, [
+                        React.createElement(Info, { key: 'icon', size: 14 }),
+                        "Show Info"
+                    ])
+                ].filter(Boolean));  // Filter out false values from conditional rendering
+            })(),
+
+            // Info popup modal - supports single-panel (group/node/edge) or 3-panel (full) view
             infoPopup.open && React.createElement('div', {
                 key: 'info-popup',
                 className: "fixed z-50",
                 style: {
                     left: infoPopupPos.x,
                     top: infoPopupPos.y,
-                    // Narrower width for group-only view
-                    width: infoPopup.type === 'group' ? Math.min(350, infoPopupSize.width) : infoPopupSize.width,
+                    // Use popup size directly (already set appropriately by the opener function)
+                    width: infoPopupSize.width,
                     height: infoPopupSize.height
                 },
                 onMouseDown: handleInfoDragStart
@@ -3154,21 +3718,84 @@ IMPORTANT RULES:
                         key: 'close-x',
                         onClick: () => {
                             // Restore original values (Cancel)
-                            const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                            const currentGroupName = nodes[infoPopup.nodeIndex]?.Group_xA;
                             const nodeIdx = infoPopup.nodeIndex;
-                            setNodes(prev => prev.map((node, i) => {
-                                let updated = { ...node };
-                                // Restore Group_Info for all nodes in the group
-                                if (node.Group_xA === groupName) {
-                                    updated.Group_Info = infoOriginal.groupInfo;
+
+                            setNodes(prev => {
+                                const updated = prev.map(n => ({ ...n }));
+
+                                if (infoPopup.type === 'group' && infoOriginal.groupName && currentGroupName !== infoOriginal.groupName) {
+                                    // Restore group name for all nodes in this group
+                                    updated.forEach((node, i) => {
+                                        if (node.Group_xA === currentGroupName) {
+                                            const currentID = node.ID_xA;
+                                            updated[i].Group_xA = infoOriginal.groupName;
+                                            updated[i].ID_xA = window.GraphApp.utils.generateID(infoOriginal.groupName, node.Node_xA);
+                                            // Restore references that now point to the edited ID
+                                            if (currentID && updated[i].ID_xA && currentID !== updated[i].ID_xA) {
+                                                updated.forEach((refNode, j) => {
+                                                    if (refNode.Linked_Node_ID_xA === currentID) {
+                                                        updated[j].Linked_Node_ID_xA = updated[i].ID_xA;
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    });
+                                    // Restore collapsedGroups if current name was collapsed
+                                    if (collapsedGroups.has(currentGroupName)) {
+                                        setCollapsedGroups(prev => {
+                                            const newSet = new Set(prev);
+                                            newSet.delete(currentGroupName);
+                                            newSet.add(infoOriginal.groupName);
+                                            return newSet;
+                                        });
+                                    }
+                                    // Restore hiddenGroups if current name was hidden
+                                    if (hiddenGroups.has(currentGroupName)) {
+                                        setHiddenGroups(prev => {
+                                            const newSet = new Set(prev);
+                                            newSet.delete(currentGroupName);
+                                            newSet.add(infoOriginal.groupName);
+                                            return newSet;
+                                        });
+                                    }
                                 }
-                                // Restore Node_Info and Link_Info for the specific node
-                                if (i === nodeIdx) {
-                                    updated.Node_Info = infoOriginal.nodeInfo;
-                                    updated.Link_Info = infoOriginal.linkInfo;
+
+                                if (infoPopup.type === 'node' && infoOriginal.nodeName !== undefined) {
+                                    // Restore node name for this specific node
+                                    const currentID = updated[nodeIdx]?.ID_xA;
+                                    const originalID = window.GraphApp.utils.generateID(updated[nodeIdx]?.Group_xA, infoOriginal.nodeName);
+                                    if (currentID !== originalID) {
+                                        updated[nodeIdx].Node_xA = infoOriginal.nodeName;
+                                        updated[nodeIdx].ID_xA = originalID;
+                                        // Restore references
+                                        if (currentID && originalID) {
+                                            updated.forEach((refNode, j) => {
+                                                if (refNode.Linked_Node_ID_xA === currentID) {
+                                                    updated[j].Linked_Node_ID_xA = originalID;
+                                                }
+                                            });
+                                        }
+                                    }
                                 }
+
+                                // Restore info fields
+                                updated.forEach((node, i) => {
+                                    // Restore Group_Info for all nodes in the original group
+                                    const targetGroupName = infoPopup.type === 'group' ? infoOriginal.groupName : currentGroupName;
+                                    if (node.Group_xA === targetGroupName || node.Group_xA === currentGroupName) {
+                                        updated[i].Group_Info = infoOriginal.groupInfo;
+                                    }
+                                    // Restore Node_Info and Link_Info for the specific node
+                                    if (i === nodeIdx) {
+                                        updated[i].Node_Info = infoOriginal.nodeInfo;
+                                        updated[i].Link_Info = infoOriginal.linkInfo;
+                                    }
+                                });
+
                                 return updated;
-                            }));
+                            });
+
                             infoEditedRef.current = false;
                             setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
                         },
@@ -3176,47 +3803,254 @@ IMPORTANT RULES:
                         title: "Cancel"
                     }, React.createElement(X, { size: 14 })),
 
-                    // Panel grid - 1 column for group-only, 3 columns for full view
+                    // Panel grid - 1 column for single-panel views (group/node/edge), 3 columns for full view
                     React.createElement('div', {
                         key: 'panels',
-                        className: infoPopup.type === 'group'
+                        className: (infoPopup.type === 'group' || infoPopup.type === 'node' || infoPopup.type === 'edge')
                             ? "p-4 flex-1 min-h-0 flex flex-col"
                             : "grid grid-cols-3 gap-3 p-4 flex-1 min-h-0"
-                    }, infoPopup.type === 'group' ? [
-                        // Group-only view (collapsed group) - no warning needed, it's obvious
-                        React.createElement('label', {
-                            key: 'group-label',
-                            className: "text-xs text-gray-500 mb-1"
-                        }, "Group Info"),
-                        React.createElement('div', {
-                            key: 'group-name',
-                            className: "text-sm font-medium text-gray-800 mb-2 truncate",
-                            title: nodes[infoPopup.nodeIndex]?.Group_xA || ''
-                        }, nodes[infoPopup.nodeIndex]?.Group_xA || ''),
-                        // Inconsistency warning if applicable
-                        ...(groupInfoInconsistencies.has(nodes[infoPopup.nodeIndex]?.Group_xA) ? [
+                    }, infoPopup.type === 'group' ? (() => {
+                        // Group-only view - with action buttons at top
+                        const groupName = nodes[infoPopup.nodeIndex]?.Group_xA || '';
+                        const linkedGroups = getLinkedGroups(groupName);
+                        const hasLinkedGroups = linkedGroups.size > 0;
+
+                        return [
+                            // Action buttons row
                             React.createElement('div', {
-                                key: 'inconsistency-warning',
-                                className: "bg-red-100 text-red-700 px-2 py-1 rounded text-xs mb-2"
-                            }, "Inconsistent values - editing will sync")
-                        ] : []),
+                                key: 'action-buttons',
+                                className: "flex gap-2 mb-3"
+                            }, [
+                                React.createElement('button', {
+                                    key: 'show-linked',
+                                    onClick: (e) => {
+                                        e.stopPropagation();
+                                        showLinkedGroupsFromPopup(groupName);
+                                    },
+                                    disabled: !hasLinkedGroups,
+                                    className: hasLinkedGroups
+                                        ? "px-3 py-1.5 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1"
+                                        : "px-3 py-1.5 text-xs bg-gray-50 text-gray-400 border border-gray-200 rounded cursor-not-allowed flex items-center gap-1",
+                                    style: { cursor: hasLinkedGroups ? 'pointer' : 'not-allowed' },
+                                    title: hasLinkedGroups ? 'Unhide all groups that share links with this group' : 'No linked groups'
+                                }, [
+                                    React.createElement(Eye, { key: 'icon', size: 12 }),
+                                    "Show Linked"
+                                ]),
+                                React.createElement('button', {
+                                    key: 'show-only-linked',
+                                    onClick: (e) => {
+                                        e.stopPropagation();
+                                        showOnlyLinkedGroupsFromPopup(groupName);
+                                    },
+                                    disabled: !hasLinkedGroups,
+                                    className: hasLinkedGroups
+                                        ? "px-3 py-1.5 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1"
+                                        : "px-3 py-1.5 text-xs bg-gray-50 text-gray-400 border border-gray-200 rounded cursor-not-allowed flex items-center gap-1",
+                                    style: { cursor: hasLinkedGroups ? 'pointer' : 'not-allowed' },
+                                    title: hasLinkedGroups ? 'Hide all groups except this one and its linked groups' : 'No linked groups'
+                                }, [
+                                    React.createElement(EyeOff, { key: 'icon', size: 12 }),
+                                    "Show ONLY Linked"
+                                ]),
+                                React.createElement('button', {
+                                    key: 'hide-all-others',
+                                    onClick: (e) => {
+                                        e.stopPropagation();
+                                        // Hide all groups except this one
+                                        const allGroups = new Set(nodes.map(n => n.Group_xA).filter(Boolean));
+                                        const newHidden = new Set();
+                                        allGroups.forEach(g => {
+                                            if (g !== groupName) {
+                                                newHidden.add(g);
+                                            }
+                                        });
+                                        setHiddenGroups(newHidden);
+                                    },
+                                    className: "px-3 py-1.5 text-xs bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 flex items-center gap-1",
+                                    style: { cursor: 'pointer' },
+                                    title: 'Hide all other groups, show only this one'
+                                }, [
+                                    React.createElement(EyeOff, { key: 'icon', size: 12 }),
+                                    "Hide Others"
+                                ])
+                            ]),
+                            // Group Name label
+                            React.createElement('label', {
+                                key: 'group-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Group Name"),
+                            // Editable Group name input
+                            React.createElement('input', {
+                                key: 'group-name',
+                                type: 'text',
+                                className: "text-sm font-medium text-gray-800 mb-2 px-2 py-1 border border-gray-300 rounded w-full",
+                                value: groupName,
+                                onChange: (e) => {
+                                    const newGroupName = e.target.value;
+                                    const oldGroupName = groupName;
+                                    infoEditedRef.current = true;
+                                    // Update ALL nodes in this group with reference tracking
+                                    setNodes(prev => {
+                                        const updated = prev.map(n => ({ ...n }));
+                                        updated.forEach((node, i) => {
+                                            if (node.Group_xA === oldGroupName) {
+                                                const oldID = node.ID_xA;
+                                                updated[i].Group_xA = newGroupName;
+                                                updated[i].ID_xA = window.GraphApp.utils.generateID(newGroupName, node.Node_xA);
+                                                // Reference tracking - update Linked_Node_ID_xA that pointed to old ID
+                                                if (oldID && updated[i].ID_xA && oldID !== updated[i].ID_xA) {
+                                                    updated.forEach((refNode, j) => {
+                                                        if (refNode.Linked_Node_ID_xA === oldID) {
+                                                            updated[j].Linked_Node_ID_xA = updated[i].ID_xA;
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        });
+                                        return updated;
+                                    });
+                                    // Update collapsedGroups if old name was collapsed
+                                    if (collapsedGroups.has(oldGroupName)) {
+                                        setCollapsedGroups(prev => {
+                                            const newSet = new Set(prev);
+                                            newSet.delete(oldGroupName);
+                                            newSet.add(newGroupName);
+                                            return newSet;
+                                        });
+                                    }
+                                    // Update hiddenGroups if old name was hidden
+                                    if (hiddenGroups.has(oldGroupName)) {
+                                        setHiddenGroups(prev => {
+                                            const newSet = new Set(prev);
+                                            newSet.delete(oldGroupName);
+                                            newSet.add(newGroupName);
+                                            return newSet;
+                                        });
+                                    }
+                                }
+                            }),
+                            // Inconsistency warning if applicable
+                            ...(groupInfoInconsistencies.has(groupName) ? [
+                                React.createElement('div', {
+                                    key: 'inconsistency-warning',
+                                    className: "bg-red-100 text-red-700 px-2 py-1 rounded text-xs mb-2"
+                                }, "Inconsistent values - editing will sync")
+                            ] : []),
+                            // Group Info label
+                            React.createElement('label', {
+                                key: 'group-info-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Group Info"),
+                            // Textarea
+                            React.createElement('textarea', {
+                                key: 'group-textarea',
+                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                placeholder: 'Enter group description...',
+                                style: { cursor: 'text' },
+                                value: (() => {
+                                    const firstNode = nodes.find(n => n.Group_xA === groupName);
+                                    return firstNode?.Group_Info || '';
+                                })(),
+                                onChange: (e) => {
+                                    const value = e.target.value;
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => prev.map(node =>
+                                        node.Group_xA === groupName
+                                            ? { ...node, Group_Info: value }
+                                            : node
+                                    ));
+                                }
+                            })
+                        ];
+                    })() : infoPopup.type === 'node' ? (() => {
+                        // Node-only view (right-click on node in canvas)
+                        const nodeData = nodes[infoPopup.nodeIndex];
+                        const nodeIndex = infoPopup.nodeIndex;
+                        return [
+                            // Group label (read-only)
+                            React.createElement('div', {
+                                key: 'node-group',
+                                className: "text-xs text-gray-500 mb-2"
+                            }, `Group: ${nodeData?.Group_xA || ''}`),
+                            // Node Name label
+                            React.createElement('label', {
+                                key: 'node-name-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Node Name"),
+                            // Editable Node Name input
+                            React.createElement('input', {
+                                key: 'node-name',
+                                type: 'text',
+                                className: "text-sm font-medium text-gray-800 mb-2 px-2 py-1 border border-gray-300 rounded w-full",
+                                value: nodeData?.Node_xA || '',
+                                onChange: (e) => {
+                                    const newNodeName = e.target.value;
+                                    const oldID = nodeData?.ID_xA;
+                                    const newID = window.GraphApp.utils.generateID(nodeData?.Group_xA, newNodeName);
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => {
+                                        const updated = prev.map(n => ({ ...n }));
+                                        updated[nodeIndex].Node_xA = newNodeName;
+                                        updated[nodeIndex].ID_xA = newID;
+                                        // Reference tracking
+                                        if (oldID && newID && oldID !== newID) {
+                                            updated.forEach((refNode, j) => {
+                                                if (refNode.Linked_Node_ID_xA === oldID) {
+                                                    updated[j].Linked_Node_ID_xA = newID;
+                                                }
+                                            });
+                                        }
+                                        return updated;
+                                    });
+                                }
+                            }),
+                            // Node Info label
+                            React.createElement('label', {
+                                key: 'node-info-label',
+                                className: "text-xs text-gray-500 mb-1"
+                            }, "Node Info"),
+                            // Node Info textarea
+                            React.createElement('textarea', {
+                                key: 'node-textarea',
+                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                placeholder: 'Enter node notes...',
+                                style: { cursor: 'text' },
+                                value: nodeData?.Node_Info || '',
+                                onChange: (e) => {
+                                    const value = e.target.value;
+                                    infoEditedRef.current = true;
+                                    setNodes(prev => prev.map((node, i) =>
+                                        i === nodeIndex
+                                            ? { ...node, Node_Info: value }
+                                            : node
+                                    ));
+                                }
+                            })
+                        ];
+                    })() : infoPopup.type === 'edge' ? [
+                        // Edge-only view (right-click on link in canvas)
+                        React.createElement('label', {
+                            key: 'link-label',
+                            className: "text-xs text-gray-500 mb-1"
+                        }, "Link Info"),
+                        React.createElement('div', {
+                            key: 'link-target',
+                            className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                            title: nodes[infoPopup.nodeIndex]?.ID_xA + ' → ' + (nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA || '')
+                        }, nodes[infoPopup.nodeIndex]?.ID_xA + ' → ' + (nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA || '')),
                         React.createElement('textarea', {
-                            key: 'group-textarea',
+                            key: 'link-textarea',
                             className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
-                            placeholder: 'Enter group description...',
+                            placeholder: 'Enter link notes...',
                             style: { cursor: 'text' },
-                            value: (() => {
-                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
-                                const firstNode = nodes.find(n => n.Group_xA === groupName);
-                                return firstNode?.Group_Info || '';
-                            })(),
+                            value: nodes[infoPopup.nodeIndex]?.Link_Info || '',
                             onChange: (e) => {
                                 const value = e.target.value;
-                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
                                 infoEditedRef.current = true;
-                                setNodes(prev => prev.map(node =>
-                                    node.Group_xA === groupName
-                                        ? { ...node, Group_Info: value }
+                                setNodes(prev => prev.map((node, i) =>
+                                    i === infoPopup.nodeIndex
+                                        ? { ...node, Link_Info: value }
                                         : node
                                 ));
                             }
@@ -3348,22 +4182,83 @@ IMPORTANT RULES:
                         React.createElement('button', {
                             key: 'cancel-btn',
                             onClick: () => {
-                                // Restore original values
-                                const groupName = nodes[infoPopup.nodeIndex]?.Group_xA;
+                                // Restore original values (same logic as X button)
+                                const currentGroupName = nodes[infoPopup.nodeIndex]?.Group_xA;
                                 const nodeIdx = infoPopup.nodeIndex;
-                                setNodes(prev => prev.map((node, i) => {
-                                    let updated = { ...node };
-                                    // Restore Group_Info for all nodes in the group
-                                    if (node.Group_xA === groupName) {
-                                        updated.Group_Info = infoOriginal.groupInfo;
+
+                                setNodes(prev => {
+                                    const updated = prev.map(n => ({ ...n }));
+
+                                    if (infoPopup.type === 'group' && infoOriginal.groupName && currentGroupName !== infoOriginal.groupName) {
+                                        // Restore group name for all nodes in this group
+                                        updated.forEach((node, i) => {
+                                            if (node.Group_xA === currentGroupName) {
+                                                const currentID = node.ID_xA;
+                                                updated[i].Group_xA = infoOriginal.groupName;
+                                                updated[i].ID_xA = window.GraphApp.utils.generateID(infoOriginal.groupName, node.Node_xA);
+                                                // Restore references
+                                                if (currentID && updated[i].ID_xA && currentID !== updated[i].ID_xA) {
+                                                    updated.forEach((refNode, j) => {
+                                                        if (refNode.Linked_Node_ID_xA === currentID) {
+                                                            updated[j].Linked_Node_ID_xA = updated[i].ID_xA;
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        });
+                                        // Restore collapsedGroups if current name was collapsed
+                                        if (collapsedGroups.has(currentGroupName)) {
+                                            setCollapsedGroups(prev => {
+                                                const newSet = new Set(prev);
+                                                newSet.delete(currentGroupName);
+                                                newSet.add(infoOriginal.groupName);
+                                                return newSet;
+                                            });
+                                        }
+                                        // Restore hiddenGroups if current name was hidden
+                                        if (hiddenGroups.has(currentGroupName)) {
+                                            setHiddenGroups(prev => {
+                                                const newSet = new Set(prev);
+                                                newSet.delete(currentGroupName);
+                                                newSet.add(infoOriginal.groupName);
+                                                return newSet;
+                                            });
+                                        }
                                     }
-                                    // Restore Node_Info and Link_Info for the specific node
-                                    if (i === nodeIdx) {
-                                        updated.Node_Info = infoOriginal.nodeInfo;
-                                        updated.Link_Info = infoOriginal.linkInfo;
+
+                                    if (infoPopup.type === 'node' && infoOriginal.nodeName !== undefined) {
+                                        // Restore node name for this specific node
+                                        const currentID = updated[nodeIdx]?.ID_xA;
+                                        const originalID = window.GraphApp.utils.generateID(updated[nodeIdx]?.Group_xA, infoOriginal.nodeName);
+                                        if (currentID !== originalID) {
+                                            updated[nodeIdx].Node_xA = infoOriginal.nodeName;
+                                            updated[nodeIdx].ID_xA = originalID;
+                                            // Restore references
+                                            if (currentID && originalID) {
+                                                updated.forEach((refNode, j) => {
+                                                    if (refNode.Linked_Node_ID_xA === currentID) {
+                                                        updated[j].Linked_Node_ID_xA = originalID;
+                                                    }
+                                                });
+                                            }
+                                        }
                                     }
+
+                                    // Restore info fields
+                                    updated.forEach((node, i) => {
+                                        const targetGroupName = infoPopup.type === 'group' ? infoOriginal.groupName : currentGroupName;
+                                        if (node.Group_xA === targetGroupName || node.Group_xA === currentGroupName) {
+                                            updated[i].Group_Info = infoOriginal.groupInfo;
+                                        }
+                                        if (i === nodeIdx) {
+                                            updated[i].Node_Info = infoOriginal.nodeInfo;
+                                            updated[i].Link_Info = infoOriginal.linkInfo;
+                                        }
+                                    });
+
                                     return updated;
-                                }));
+                                });
+
                                 infoEditedRef.current = false;
                                 setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
                             },
@@ -3371,9 +4266,19 @@ IMPORTANT RULES:
                             style: { cursor: 'pointer' }
                         }, "Cancel"),
                         React.createElement('button', {
+                            key: 'close-btn',
+                            onClick: () => {
+                                // Just close - keep changes but don't save to history
+                                infoEditedRef.current = false;
+                                setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
+                            },
+                            className: "px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded",
+                            style: { cursor: 'pointer' }
+                        }, "Close"),
+                        React.createElement('button', {
                             key: 'save-btn',
                             onClick: () => {
-                                // Save changes to history
+                                // Save changes to history and close
                                 if (infoEditedRef.current) {
                                     saveToHistory(nodes);
                                     infoEditedRef.current = false;
@@ -3382,7 +4287,7 @@ IMPORTANT RULES:
                             },
                             className: "px-3 py-1.5 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded",
                             style: { cursor: 'pointer' }
-                        }, "Save")
+                        }, "Save & Close")
                     ]),
 
                     // Resize handle (bottom-right corner)
@@ -3490,6 +4395,70 @@ IMPORTANT RULES:
                             React.createElement('span', { key: 'desc', className: "text-xs text-gray-500" }, "(best quality)")
                         ])
                     ])
+                ]),
+
+                // AI Skill section
+                React.createElement('div', { key: 'skill-section', className: "mb-4 pt-4 border-t border-gray-200" }, [
+                    React.createElement('label', {
+                        key: 'label',
+                        className: "block text-sm font-medium text-gray-700 mb-2"
+                    }, "AI Skill"),
+
+                    // Current skill status
+                    React.createElement('div', {
+                        key: 'status',
+                        className: "flex items-center gap-2 mb-2"
+                    }, [
+                        React.createElement('span', {
+                            key: 'indicator',
+                            className: "inline-block w-2 h-2 rounded-full " + (currentSkill.isCustom ? 'bg-green-500' : 'bg-gray-400')
+                        }),
+                        React.createElement('span', {
+                            key: 'name',
+                            className: "text-sm text-gray-600"
+                        }, currentSkill.isCustom ? currentSkill.name : 'Default Skill'),
+                        currentSkill.isCustom && React.createElement('span', {
+                            key: 'custom-badge',
+                            className: "text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded"
+                        }, "Custom")
+                    ]),
+
+                    // Upload and Reset buttons
+                    React.createElement('div', {
+                        key: 'skill-buttons',
+                        className: "flex gap-2"
+                    }, [
+                        // Hidden file input
+                        React.createElement('input', {
+                            key: 'file-input',
+                            ref: skillInputRef,
+                            type: 'file',
+                            accept: '.md,.txt',
+                            onChange: handleSkillUpload,
+                            className: "hidden"
+                        }),
+                        // Upload button
+                        React.createElement('button', {
+                            key: 'upload',
+                            onClick: () => skillInputRef.current && skillInputRef.current.click(),
+                            className: "px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded border border-blue-200 flex items-center gap-1"
+                        }, [
+                            React.createElement(Upload, { key: 'icon', size: 14 }),
+                            "Upload Skill"
+                        ]),
+                        // Reset button (only show if custom skill is active)
+                        currentSkill.isCustom && React.createElement('button', {
+                            key: 'reset',
+                            onClick: resetToDefaultSkill,
+                            className: "px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 rounded border border-gray-200"
+                        }, "Reset to Default")
+                    ]),
+
+                    // Help text
+                    React.createElement('p', {
+                        key: 'help',
+                        className: "mt-2 text-xs text-gray-500"
+                    }, "Upload a .md file with custom AI instructions. Must include {CONTEXT} placeholder.")
                 ]),
 
                 // Buttons

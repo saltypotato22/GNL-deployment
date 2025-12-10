@@ -281,6 +281,16 @@
         ], props);
     };
 
+    // ChevronUp icon
+    const ChevronUp = function(props) {
+        return createIcon([
+            React.createElement('polyline', {
+                key: 'polyline',
+                points: '6 15 12 9 18 15'
+            })
+        ], props);
+    };
+
     // ChevronRight icon
     const ChevronRight = function(props) {
         return createIcon([
@@ -527,6 +537,7 @@
         ArrowUp,
         ArrowDown,
         ChevronDown,
+        ChevronUp,
         ChevronRight,
         Maximize2,
         Link,

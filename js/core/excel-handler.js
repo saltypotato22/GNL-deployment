@@ -48,21 +48,21 @@
             // Skip header row
             if (rowNumber === 1) return;
 
-            // xA = core data (ID auto-generated from Group-Node)
-            // xB = optional modifiers with defaults
-            const group = getColumnValue(row, 'Group_xA');
-            const nodeName = getColumnValue(row, 'Node_xA');
-            const id = getColumnValue(row, 'ID_xA');
+            // Column name translation: New clean names first, old _xA/_xB names as fallback
+            // Internal fields still use _xA/_xB for code clarity
+            const group = getColumnValue(row, 'Group', 'Group_xA');
+            const nodeName = getColumnValue(row, 'Node', 'Node_xA');
+            const id = getColumnValue(row, 'ID', 'ID_xA');
 
             const node = {
                 Group_xA: group,
                 Node_xA: nodeName,
-                ID_xA: id || `${group}-${nodeName}`,
-                Linked_Node_ID_xA: getColumnValue(row, 'Linked_Node_ID_xA', 'Linked Node ID_xA'),
-                Hidden_Node_xB: parseInt(getColumnValue(row, 'Hidden_Node_xB', 'Hidden Node_xB')) || 0,
-                Hidden_Link_xB: parseInt(getColumnValue(row, 'Hidden_Link_xB', 'Hidden Link_xB')) || 0,
-                Link_Label_xB: getColumnValue(row, 'Link_Label_xB', 'Link Label_xB') || '',
-                Link_Arrow_xB: getColumnValue(row, 'Link_Arrow_xB', 'Link Arrow_xB') || 'To',
+                ID_xA: id || `${group}-${nodeName}`,  // Auto-generate ID if not provided
+                Linked_Node_ID_xA: getColumnValue(row, 'Linked_To', 'Linked To', 'Linked_Node_ID_xA', 'Linked Node ID_xA'),
+                Hidden_Node_xB: parseInt(getColumnValue(row, 'Hide_Node', 'Hide Node', 'Hidden_Node_xB', 'Hidden Node_xB')) || 0,
+                Hidden_Link_xB: parseInt(getColumnValue(row, 'Hide_Link', 'Hide Link', 'Hidden_Link_xB', 'Hidden Link_xB')) || 0,
+                Link_Label_xB: getColumnValue(row, 'Link_Label', 'Link Label', 'Link_Label_xB', 'Link Label_xB') || '',
+                Link_Arrow_xB: getColumnValue(row, 'Arrow', 'Link_Arrow_xB', 'Link Arrow_xB') || 'To',
                 Group_Info: getColumnValue(row, 'Group_Info') || '',
                 Node_Info: getColumnValue(row, 'Node_Info') || '',
                 Link_Info: getColumnValue(row, 'Link_Info') || ''
@@ -111,12 +111,13 @@
         const hasAnyLinkInfo = nodes.some(n => n.Link_Info && n.Link_Info.trim());
 
         // Build headers dynamically (slim 5-column format + optional info columns)
+        // Export uses clean column names (translation layer)
         const headers = [
-            'Group_xA',
-            'Node_xA',
-            'ID_xA',
-            'Linked Node ID_xA',
-            'Link Label_xB'
+            'Group',
+            'Node',
+            'ID',
+            'Linked_To',
+            'Link_Label'
         ];
         if (hasAnyGroupInfo) headers.push('Group_Info');
         if (hasAnyNodeInfo) headers.push('Node_Info');

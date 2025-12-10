@@ -22,6 +22,7 @@
     const nodePositions = new Map();  // Store positions for stability
     let currentGroupOrder = [];  // Store group order from data (for layout)
     let currentHideLinks = false;  // Track hide links state for layout decisions
+    let currentNodeSpacing = 0;  // Extra spacing added to minimum (0-100)
 
     /**
      * Convert nodes array to Cytoscape elements format
@@ -46,8 +47,68 @@
             }
         });
 
+        // === MUX NODE PROCESSING ===
+        // MUX nodes (ending with " MUX") appear as compact single-node groups OUTSIDE connected groups
+        // One mini-group per (MUX node × destination group) pair - layout treats them as regular groups
+        const muxNodes = new Map(); // originalID -> { node, connectionsByGroup: Map<destGroup, connections[]> }
+        const isMuxNode = window.GraphApp.utils.isMuxNode;
+        // Note: generateMuxCloneID no longer used - now using muxclone_{originalID}_for_{destGroup} format
+
+        // Identify MUX nodes with grouped connections
+        nodes.forEach(node => {
+            if (isMuxNode(node.Node_xA)) {
+                muxNodes.set(node.ID_xA, { node, connectionsByGroup: new Map() });
+            }
+        });
+
+        // Collect connections grouped by destination group for each MUX node
+        nodes.forEach(node => {
+            // Skip hidden nodes
+            if (node.Hidden_Node_xB == 1) return;
+            if (hidden.has(node.Group_xA)) return;
+
+            // Incoming: regular node links TO a MUX node
+            if (node.Linked_Node_ID_xA && !node.Hidden_Link_xB && muxNodes.has(node.Linked_Node_ID_xA)) {
+                // Don't count MUX-to-MUX as incoming (handle separately)
+                if (!muxNodes.has(node.ID_xA)) {
+                    const muxInfo = muxNodes.get(node.Linked_Node_ID_xA);
+                    const destGroup = node.Group_xA || 'Ungrouped';
+                    if (!muxInfo.connectionsByGroup.has(destGroup)) {
+                        muxInfo.connectionsByGroup.set(destGroup, []);
+                    }
+                    muxInfo.connectionsByGroup.get(destGroup).push({
+                        type: 'incoming',
+                        nodeID: node.ID_xA,
+                        nodeGroup: destGroup,
+                        sourceNode: node
+                    });
+                }
+            }
+
+            // Outgoing: MUX node links TO another node
+            if (muxNodes.has(node.ID_xA) && node.Linked_Node_ID_xA && !node.Hidden_Link_xB) {
+                const target = nodes.find(n => n.ID_xA === node.Linked_Node_ID_xA);
+                if (target && target.Hidden_Node_xB != 1 && !hidden.has(target.Group_xA)) {
+                    // For MUX-to-MUX, use target's original group
+                    const muxInfo = muxNodes.get(node.ID_xA);
+                    const destGroup = target.Group_xA || 'Ungrouped';
+                    if (!muxInfo.connectionsByGroup.has(destGroup)) {
+                        muxInfo.connectionsByGroup.set(destGroup, []);
+                    }
+                    muxInfo.connectionsByGroup.get(destGroup).push({
+                        type: 'outgoing',
+                        nodeID: target.ID_xA,
+                        nodeGroup: destGroup,
+                        sourceNode: node
+                    });
+                }
+            }
+        });
+
         // Collect unique groups (compound/parent nodes)
+        // Also collect MUX mini-groups (one per MUX node × destination group)
         const groups = new Set();
+        const muxMiniGroups = []; // { muxID, muxNode, destGroup } - for creating mini compound nodes
         nodes.forEach(node => {
             if (node.Hidden_Node_xB == 1) return;
             if (hidden.has(node.Group_xA)) return;
@@ -55,11 +116,31 @@
             if (hideLinkedNodes && linkedNodeIDs.has(node.ID_xA)) return;
 
             groups.add(node.Group_xA || 'Ungrouped');
+
+            // For MUX nodes with connections, create mini-groups (NOT add to destination groups)
+            if (muxNodes.has(node.ID_xA)) {
+                const muxInfo = muxNodes.get(node.ID_xA);
+                muxInfo.connectionsByGroup.forEach((connections, destGroup) => {
+                    // Ensure destination group exists (for edge targets)
+                    groups.add(destGroup);
+                    // Track mini-group to create
+                    muxMiniGroups.push({
+                        muxID: node.ID_xA,
+                        muxNode: node,
+                        destGroup: destGroup
+                    });
+                });
+            }
+
             visibleNodeIDs.add(node.ID_xA);
         });
 
         // Store group order for layout (preserves data order)
+        // Include MUX mini-groups after regular groups
         currentGroupOrder = [...groups].map(g => `group_${g}`);
+        muxMiniGroups.forEach(mg => {
+            currentGroupOrder.push(`muxgroup_${mg.muxID}_for_${mg.destGroup}`);
+        });
 
         // Add group (parent/compound) nodes first, then label nodes
         groups.forEach(groupName => {
@@ -89,7 +170,63 @@
             });
         });
 
-        // Add regular nodes with parent reference
+        // Add MUX mini compound nodes (compact single-node groups outside destination groups)
+        // Each mini-group has: origin group label + single MUX clone node
+        muxMiniGroups.forEach(mg => {
+            const miniGroupId = `muxgroup_${mg.muxID}_for_${mg.destGroup}`;
+            const cloneId = `muxclone_${mg.muxID}_for_${mg.destGroup}`;
+            const labelId = `muxlabel_${mg.muxID}_for_${mg.destGroup}`;
+            const originGroup = mg.muxNode.Group_xA || 'Ungrouped';
+
+            // Mini compound node
+            elements.push({
+                group: 'nodes',
+                data: {
+                    id: miniGroupId,
+                    label: '',  // Compound label hidden - using label node instead
+                    isGroup: true,
+                    isMuxGroup: true,  // Flag for compact styling
+                    originalGroup: originGroup,
+                    targetGroup: mg.destGroup
+                }
+            });
+
+            // Label node showing origin group name (appears above the MUX node)
+            const labelPosition = nodePositions.get(labelId);
+            elements.push({
+                group: 'nodes',
+                data: {
+                    id: labelId,
+                    label: originGroup,
+                    parent: miniGroupId,
+                    isGroupLabel: true,
+                    isMuxLabel: true,  // Flag for smaller styling if needed
+                    isGroup: false
+                },
+                position: labelPosition ? { ...labelPosition } : undefined
+            });
+
+            // Single MUX clone node - display as-is (already ends with " MUX")
+            const displayLabel = mg.muxNode.Node_xA || '';
+            const storedPosition = nodePositions.get(cloneId);
+            elements.push({
+                group: 'nodes',
+                data: {
+                    id: cloneId,
+                    label: displayLabel,
+                    parent: miniGroupId,
+                    isGroup: false,
+                    isMuxClone: true,
+                    originalID: mg.muxID,
+                    isLinked: true
+                },
+                position: storedPosition ? { ...storedPosition } : undefined
+            });
+
+            visibleNodeIDs.add(cloneId);
+        });
+
+        // Add regular nodes with parent reference (including MUX clone handling)
         nodes.forEach(node => {
             if (node.Hidden_Node_xB == 1) return;
             if (hidden.has(node.Group_xA)) return;
@@ -97,8 +234,32 @@
             if (hideLinkedNodes && linkedNodeIDs.has(node.ID_xA)) return;
 
             const groupName = node.Group_xA || 'Ungrouped';
-            const storedPosition = nodePositions.get(node.ID_xA);
 
+            // Handle MUX nodes specially
+            if (muxNodes.has(node.ID_xA)) {
+                const muxInfo = muxNodes.get(node.ID_xA);
+
+                if (muxInfo.connectionsByGroup.size === 0) {
+                    // No connections - show original node normally in its group
+                    const storedPosition = nodePositions.get(node.ID_xA);
+                    elements.push({
+                        group: 'nodes',
+                        data: {
+                            id: node.ID_xA,
+                            label: node.Node_xA || '',
+                            parent: `group_${groupName}`,
+                            isGroup: false,
+                            isLinked: linkedNodeIDs.has(node.ID_xA)
+                        },
+                        position: storedPosition ? { ...storedPosition } : undefined
+                    });
+                }
+                // Clones already created in mini-groups above - skip here
+                return; // Skip normal processing for MUX nodes
+            }
+
+            // Regular node (non-MUX)
+            const storedPosition = nodePositions.get(node.ID_xA);
             elements.push({
                 group: 'nodes',
                 data: {
@@ -106,9 +267,8 @@
                     label: node.Node_xA || '',
                     parent: `group_${groupName}`,
                     isGroup: false,
-                    isLinked: linkedNodeIDs.has(node.ID_xA)  // For bold border when links hidden
+                    isLinked: linkedNodeIDs.has(node.ID_xA)
                 },
-                // Restore position if we have it stored
                 position: storedPosition ? { ...storedPosition } : undefined
             });
         });
@@ -117,15 +277,41 @@
         if (!hideLinks) {
             nodes.forEach(node => {
                 if (!node.Linked_Node_ID_xA || node.Hidden_Link_xB == 1) return;
-                if (!visibleNodeIDs.has(node.ID_xA)) return;
-                if (!visibleNodeIDs.has(node.Linked_Node_ID_xA)) return;
+
+                let sourceID = node.ID_xA;
+                let targetID = node.Linked_Node_ID_xA;
+                const sourceGroup = node.Group_xA || 'Ungrouped';
+
+                // Find target node to get its group
+                const targetNode = nodes.find(n => n.ID_xA === targetID);
+                const targetGroup = targetNode ? (targetNode.Group_xA || 'Ungrouped') : 'Ungrouped';
+
+                // Rewire edges for MUX nodes using destination-group-based clone IDs
+                if (muxNodes.has(sourceID)) {
+                    const muxInfo = muxNodes.get(sourceID);
+                    if (muxInfo.connectionsByGroup.size > 0) {
+                        // Source is MUX → use clone in target's group
+                        sourceID = `muxclone_${sourceID}_for_${targetGroup}`;
+                    }
+                }
+                if (muxNodes.has(targetID)) {
+                    const muxInfo = muxNodes.get(targetID);
+                    if (muxInfo.connectionsByGroup.size > 0) {
+                        // Target is MUX → use clone in source's group
+                        targetID = `muxclone_${targetID}_for_${sourceGroup}`;
+                    }
+                }
+
+                // Only add edge if both endpoints are visible
+                if (!visibleNodeIDs.has(sourceID)) return;
+                if (!visibleNodeIDs.has(targetID)) return;
 
                 elements.push({
                     group: 'edges',
                     data: {
-                        id: `edge_${node.ID_xA}_to_${node.Linked_Node_ID_xA}`,
-                        source: node.ID_xA,
-                        target: node.Linked_Node_ID_xA,
+                        id: `edge_${sourceID}_to_${targetID}`,
+                        source: sourceID,
+                        target: targetID,
                         label: node.Link_Label_xB || '',
                         arrow: node.Link_Arrow_xB || 'To'
                     }
@@ -199,6 +385,37 @@
                 'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
             }
         },
+        // MUX clone nodes - dashed border, light fill to indicate "reference/alias"
+        {
+            selector: 'node[?isMuxClone]',
+            style: {
+                'border-style': 'dashed',
+                'border-color': '#666666',
+                'background-color': '#f5f5f5'
+            }
+        },
+        // MUX mini-groups - fixed compact compound nodes (never expand)
+        {
+            selector: 'node[?isMuxGroup]',
+            style: {
+                'background-opacity': 0,
+                'border-width': 1,
+                'border-color': '#888888',
+                'border-style': 'dotted',
+                'padding': '0px',  // Zero padding - children define exact bounds
+                'shape': 'roundrectangle',
+                'min-width': '10px',
+                'min-height': '10px'
+            }
+        },
+        // MUX label nodes - smaller font, tight spacing
+        {
+            selector: 'node[?isMuxLabel]',
+            style: {
+                'font-size': '8px',
+                'padding': '1px'
+            }
+        },
         // All edges base style
         {
             selector: 'edge',
@@ -259,10 +476,12 @@
      * @param {Set} hiddenGroups - Groups to hide
      * @param {Boolean} hideUnlinkedNodes - Hide unlinked nodes
      * @param {Boolean} hideLinkedNodes - Hide linked nodes
+     * @param {Boolean} hideLinks - Hide all link lines from canvas
+     * @param {Boolean} hideLinkLabels - Hide link labels (but show links)
      * @param {String} containerId - DOM container ID
      * @returns {Object} Cytoscape instance
      */
-    const renderCytoscape = function(nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, containerId) {
+    const renderCytoscape = function(nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, containerId) {
         const container = document.getElementById(containerId);
         if (!container) {
             throw new Error(`Container ${containerId} not found`);
@@ -315,6 +534,16 @@
                 selector: 'node[?isLinked][!isGroup][!isGroupLabel]',
                 style: {
                     'border-width': 2  // 2px vs 1px for unlinked nodes
+                }
+            });
+        }
+
+        // Hide link labels (but keep the lines visible)
+        if (hideLinkLabels) {
+            styleArray.push({
+                selector: 'edge',
+                style: {
+                    'label': ''  // Hide edge labels
                 }
             });
         }
@@ -487,6 +716,81 @@
                     if (!foundOverlap) break;
                 }
             });
+
+            // Right-click on compound group nodes - show context menu
+            cy.on('cxttap', 'node[?isGroup]', function(evt) {
+                const groupId = evt.target.id();  // e.g., "group_PLC Rack"
+                const groupName = groupId.replace('group_', '');
+                const renderedPos = evt.renderedPosition;
+
+                // Get container offset for correct screen position
+                const containerRect = container.getBoundingClientRect();
+
+                if (window.onGroupContextMenu) {
+                    window.onGroupContextMenu({
+                        groupName: groupName,
+                        position: {
+                            x: containerRect.left + renderedPos.x,
+                            y: containerRect.top + renderedPos.y
+                        }
+                    });
+                }
+            });
+
+            // Right-click on regular nodes (not groups, not labels) - show context menu
+            cy.on('cxttap', 'node[!isGroup][!isGroupLabel]', function(evt) {
+                const nodeId = evt.target.id();
+                const renderedPos = evt.renderedPosition;
+                const containerRect = container.getBoundingClientRect();
+
+                if (window.onNodeContextMenu) {
+                    window.onNodeContextMenu({
+                        nodeId: nodeId,
+                        position: {
+                            x: containerRect.left + renderedPos.x,
+                            y: containerRect.top + renderedPos.y
+                        }
+                    });
+                }
+            });
+
+            // Right-click on edges (links) - show context menu
+            cy.on('cxttap', 'edge', function(evt) {
+                const edgeId = evt.target.id();
+                const sourceId = evt.target.source().id();
+                const targetId = evt.target.target().id();
+                const renderedPos = evt.renderedPosition;
+                const containerRect = container.getBoundingClientRect();
+
+                if (window.onEdgeContextMenu) {
+                    window.onEdgeContextMenu({
+                        edgeId: edgeId,
+                        sourceId: sourceId,
+                        targetId: targetId,
+                        position: {
+                            x: containerRect.left + renderedPos.x,
+                            y: containerRect.top + renderedPos.y
+                        }
+                    });
+                }
+            });
+
+            // Prevent browser's native context menu on Cytoscape's canvas
+            // Must target the actual canvas element, not just the container
+            const canvas = cy.container().querySelector('canvas');
+            if (canvas) {
+                canvas.oncontextmenu = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                };
+            }
+            // Also prevent on container as fallback
+            cy.container().oncontextmenu = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            };
         } else {
             // Update elements - Cytoscape handles diff efficiently
             cy.json({ elements: elements });
@@ -554,7 +858,8 @@
         // For unbundled-bezier, add control point distance for visible curves
         const edgeStyles = { 'curve-style': curveStyle };
         if (curveStyle === 'unbundled-bezier') {
-            edgeStyles['control-point-distances'] = 40;  // Perpendicular distance for curve arc
+            const curveAmount = settings.curveAmount || 40;  // Perpendicular distance for curve arc (10-100)
+            edgeStyles['control-point-distances'] = curveAmount;
             edgeStyles['control-point-weights'] = 0.5;   // Midpoint of edge
         }
         cy.style().selector('edge').style(edgeStyles).update();
@@ -657,14 +962,15 @@
     /**
      * Reposition group labels to top-left of their bounding boxes
      * Call after any layout completes for consistent label placement
+     * NOTE: Excludes MUX labels - those are handled by compactMuxGroups
      */
     const repositionLabelsToTopLeft = function() {
         if (!cy) return;
 
         const LABEL_OFFSET = 6;  // Padding from group edge
 
-        // Get all label nodes
-        const labelNodes = cy.nodes('[?isGroupLabel]');
+        // Get all label nodes EXCEPT MUX labels (those stay compact)
+        const labelNodes = cy.nodes('[?isGroupLabel]').filter(n => !n.data('isMuxLabel'));
 
         labelNodes.forEach(labelNode => {
             const parentId = labelNode.data('parent');
@@ -687,6 +993,39 @@
                     y: bbox.y1 - labelH / 2 - LABEL_OFFSET  // Above the nodes
                 });
             }
+        });
+    };
+
+    /**
+     * Compact MUX groups - position label directly above MUX clone with minimal spacing
+     * MUX groups should be fixed-size, never expand like regular groups
+     * Call after any layout completes
+     */
+    const compactMuxGroups = function() {
+        if (!cy) return;
+
+        const MUX_LABEL_GAP = 2;  // Tiny gap between label and MUX node
+
+        // Get all MUX groups
+        const muxGroups = cy.nodes('[?isMuxGroup]');
+
+        muxGroups.forEach(muxGroup => {
+            const children = muxGroup.children();
+            const labelNode = children.filter(n => n.data('isMuxLabel')).first();
+            const cloneNode = children.filter(n => n.data('isMuxClone')).first();
+
+            if (labelNode.length === 0 || cloneNode.length === 0) return;
+
+            // Get clone node position and dimensions
+            const clonePos = cloneNode.position();
+            const cloneBB = cloneNode.boundingBox({ includeOverlays: false });
+            const labelBB = labelNode.boundingBox({ includeOverlays: false });
+
+            // Position label centered directly above clone node
+            labelNode.position({
+                x: clonePos.x,  // Centered horizontally
+                y: clonePos.y - (cloneBB.h / 2) - (labelBB.h / 2) - MUX_LABEL_GAP  // Directly above
+            });
         });
     };
 
@@ -753,6 +1092,8 @@
 
         // Reposition labels relative to their sibling nodes
         repositionLabelsToTopLeft();
+        // Keep MUX groups compact
+        compactMuxGroups();
     };
 
     /**
@@ -783,7 +1124,8 @@
         if (!cy) return;
 
         const dir = direction || 'TB';
-        const PADDING = NODE_PADDING;
+        const PADDING = NODE_PADDING + currentNodeSpacing;
+        const GAP = GROUP_GAP + currentNodeSpacing;
         const nodeH = calcNodeHeight();
 
         // Use stored group order (from nodesToElements) to preserve data order
@@ -831,6 +1173,8 @@
 
         // Reposition labels relative to their sibling nodes (above them)
         repositionLabelsToTopLeft();
+        // Keep MUX groups compact
+        compactMuxGroups();
 
         // PASS 2: Stack groups using ACTUAL bounding boxes (includes labels)
         if (dir === 'TB') {
@@ -852,7 +1196,7 @@
                 });
 
                 // Next group starts after this one's actual height + gap
-                currentTop = currentTop + bbox.h + GROUP_GAP;
+                currentTop = currentTop + bbox.h + GAP;
             });
         } else {
             let currentLeft = PADDING;
@@ -870,7 +1214,7 @@
                     node.position({ x: pos.x + deltaX, y: pos.y });
                 });
 
-                currentLeft = currentLeft + bbox.w + GROUP_GAP;
+                currentLeft = currentLeft + bbox.w + GAP;
             });
         }
 
@@ -1026,16 +1370,16 @@
             fit: true,
             padding: 20,
             nodeDimensionsIncludeLabels: true,
-            nodeSeparation: currentHideLinks ? 100 : 50,
+            nodeSeparation: (currentHideLinks ? 100 : 50) + currentNodeSpacing,
             nodeRepulsion: node => currentHideLinks ? 10000 : 4500,
             gravity: currentHideLinks ? 0.05 : 0.25,
             gravityCompound: 1.0,
             packComponents: !currentHideLinks,  // Don't pack when links hidden
-            idealEdgeLength: edge => 50,
+            idealEdgeLength: edge => 50 + currentNodeSpacing,
             numIter: currentHideLinks ? 500 : 2500,  // Much fewer iterations when no edges to preserve positions
             // Compound node padding - prevents edge overlap
-            tilingPaddingVertical: currentHideLinks ? 40 : 10,
-            tilingPaddingHorizontal: currentHideLinks ? 40 : 10,
+            tilingPaddingVertical: (currentHideLinks ? 40 : 10) + currentNodeSpacing,
+            tilingPaddingHorizontal: (currentHideLinks ? 40 : 10) + currentNodeSpacing,
             stop: function() {
                 // Save positions after layout completes
                 cy.nodes('[!isGroup]').forEach(node => {
@@ -1043,6 +1387,8 @@
                 });
                 // Reposition labels to top-left of each group
                 repositionLabelsToTopLeft();
+                // Keep MUX groups compact
+                compactMuxGroups();
             }
         };
 
@@ -1084,8 +1430,8 @@
             rankDir: direction || 'TB',
 
             // Spacing - wider when links hidden to prevent overlap
-            nodeSep: currentHideLinks ? 40 : 15,   // Horizontal gap between nodes
-            rankSep: currentHideLinks ? 60 : 25,   // Vertical gap between ranks
+            nodeSep: (currentHideLinks ? 40 : 15) + currentNodeSpacing,   // Horizontal gap between nodes
+            rankSep: (currentHideLinks ? 60 : 25) + currentNodeSpacing,   // Vertical gap between ranks
             edgeSep: 10,                            // Gap between edges
 
             ranker: 'network-simplex',  // Best balance of speed and quality
@@ -1131,7 +1477,8 @@
 
         nodePositions.clear();
 
-        const PADDING = NODE_PADDING;
+        const PADDING = NODE_PADDING + currentNodeSpacing;
+        const GAP = GROUP_GAP + currentNodeSpacing;
         const nodeH = calcNodeHeight();
         const LABEL_HEIGHT = 28;  // Approximate label height including offset
 
@@ -1160,7 +1507,7 @@
         });
 
         // Step 2: Calculate target row width for square-ish shape
-        const totalWidth = groupDims.reduce((sum, g) => sum + g.width + GROUP_GAP, 0);
+        const totalWidth = groupDims.reduce((sum, g) => sum + g.width + GAP, 0);
         const avgHeight = groupDims.reduce((sum, g) => sum + g.height, 0) / groupDims.length;
         const targetRowWidth = Math.sqrt(totalWidth * avgHeight);
 
@@ -1174,7 +1521,7 @@
                 currentRowWidth = 0;
             }
             rows[rows.length - 1].push(gd);
-            currentRowWidth += gd.width + GROUP_GAP;
+            currentRowWidth += gd.width + GAP;
         });
 
         // Step 4: Arrange nodes within each group (horizontal)
@@ -1189,6 +1536,8 @@
 
         // Reposition labels
         repositionLabelsToTopLeft();
+        // Keep MUX groups compact
+        compactMuxGroups();
 
         // Step 5: Position rows
         let currentY = PADDING;
@@ -1210,10 +1559,10 @@
                     node.position({ x: pos.x + deltaX, y: pos.y + deltaY });
                 });
 
-                currentX += bbox.w + GROUP_GAP;
+                currentX += bbox.w + GAP;
             });
 
-            currentY += rowHeight + GROUP_GAP;
+            currentY += rowHeight + GAP;
         });
 
         // Save positions
@@ -1236,7 +1585,8 @@
 
         nodePositions.clear();
 
-        const PADDING = NODE_PADDING;
+        const PADDING = NODE_PADDING + currentNodeSpacing;
+        const GAP = GROUP_GAP + currentNodeSpacing;
         const nodeH = calcNodeHeight();
         const LABEL_HEIGHT = 28;
 
@@ -1264,7 +1614,7 @@
         });
 
         // Step 2: Calculate target column height for square-ish shape
-        const totalHeight = groupDims.reduce((sum, g) => sum + g.height + GROUP_GAP, 0);
+        const totalHeight = groupDims.reduce((sum, g) => sum + g.height + GAP, 0);
         const avgWidth = groupDims.reduce((sum, g) => sum + g.width, 0) / groupDims.length;
         const targetColHeight = Math.sqrt(totalHeight * avgWidth);
 
@@ -1278,7 +1628,7 @@
                 currentColHeight = 0;
             }
             cols[cols.length - 1].push(gd);
-            currentColHeight += gd.height + GROUP_GAP;
+            currentColHeight += gd.height + GAP;
         });
 
         // Step 4: Arrange nodes within each group (vertical)
@@ -1292,6 +1642,8 @@
 
         // Reposition labels
         repositionLabelsToTopLeft();
+        // Keep MUX groups compact
+        compactMuxGroups();
 
         // Step 5: Position columns
         let currentX = PADDING;
@@ -1313,10 +1665,10 @@
                     node.position({ x: pos.x + deltaX, y: pos.y + deltaY });
                 });
 
-                currentY += bbox.h + GROUP_GAP;
+                currentY += bbox.h + GAP;
             });
 
-            currentX += colWidth + GROUP_GAP;
+            currentX += colWidth + GAP;
         });
 
         // Save positions
@@ -1345,6 +1697,14 @@
         return visibleIDs;
     };
 
+    /**
+     * Set extra node spacing (additive to minimum)
+     * @param {Number} spacing - Extra spacing (0-100)
+     */
+    const setNodeSpacing = function(spacing) {
+        currentNodeSpacing = Math.max(0, Math.min(100, spacing || 0));
+    };
+
     // Expose to global namespace
     window.GraphApp.core.renderCytoscape = renderCytoscape;
     window.GraphApp.core.clearCytoscapePositions = clearPositions;
@@ -1361,5 +1721,6 @@
     window.GraphApp.core.getCytoscapeInstance = getInstance;
     window.GraphApp.core.hasCytoscapeGraph = hasGraph;
     window.GraphApp.core.getVisibleNodeIDs = getVisibleNodeIDs;
+    window.GraphApp.core.setNodeSpacing = setNodeSpacing;
 
 })(window);

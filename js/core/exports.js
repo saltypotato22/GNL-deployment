@@ -8,6 +8,7 @@
 
     /**
      * Build CSV column list based on whether info columns have data
+     * Uses clean column names (translation layer)
      * @param {Array} nodes - Array of node objects
      * @returns {Array} Column names for CSV export
      */
@@ -16,18 +17,38 @@
         const hasAnyNodeInfo = nodes.some(n => n.Node_Info && n.Node_Info.trim());
         const hasAnyLinkInfo = nodes.some(n => n.Link_Info && n.Link_Info.trim());
 
+        // Clean column names for export
         const columns = [
-            'Group_xA',
-            'Node_xA',
-            'ID_xA',
-            'Linked_Node_ID_xA',
-            'Link_Label_xB'
+            'Group',
+            'Node',
+            'ID',
+            'Linked_To',
+            'Link_Label'
         ];
         if (hasAnyGroupInfo) columns.push('Group_Info');
         if (hasAnyNodeInfo) columns.push('Node_Info');
         if (hasAnyLinkInfo) columns.push('Link_Info');
 
         return columns;
+    };
+
+    /**
+     * Transform nodes to clean export format
+     * Maps internal _xA/_xB field names to clean external names
+     * @param {Array} nodes - Array of node objects with internal names
+     * @returns {Array} Array with clean column names
+     */
+    const transformForExport = function(nodes) {
+        return nodes.map(node => ({
+            'Group': node.Group_xA || '',
+            'Node': node.Node_xA || '',
+            'ID': node.ID_xA || '',
+            'Linked_To': node.Linked_Node_ID_xA || '',
+            'Link_Label': node.Link_Label_xB || '',
+            'Group_Info': node.Group_Info || '',
+            'Node_Info': node.Node_Info || '',
+            'Link_Info': node.Link_Info || ''
+        }));
     };
 
     /**
@@ -108,6 +129,7 @@
     /**
      * Export nodes to CSV
      * Smart export: only include Group_Info/Node_Info if any values exist
+     * Uses clean column names (translation layer)
      * @param {Array} nodes - Array of node objects
      * @param {String} filename - Output filename
      */
@@ -115,8 +137,11 @@
         // Use helper to get smart column list
         const columns = getCSVColumns(nodes);
 
+        // Transform to clean column names for export
+        const exportData = transformForExport(nodes);
+
         // Use PapaParse to generate CSV
-        const csv = Papa.unparse(nodes, {
+        const csv = Papa.unparse(exportData, {
             header: true,
             columns: columns
         });
@@ -136,6 +161,7 @@
     /**
      * Generate CSV string from nodes (reusable for TXT export and clipboard)
      * Smart export: only include Group_Info/Node_Info if any values exist
+     * Uses clean column names (translation layer)
      * @param {Array} nodes - Array of node objects
      * @returns {String} CSV-formatted string
      */
@@ -143,7 +169,10 @@
         // Use helper to get smart column list
         const columns = getCSVColumns(nodes);
 
-        return Papa.unparse(nodes, {
+        // Transform to clean column names for export
+        const exportData = transformForExport(nodes);
+
+        return Papa.unparse(exportData, {
             header: true,
             columns: columns
         });
@@ -186,6 +215,7 @@
 
     /**
      * Import CSV file
+     * Accepts both new clean column names and old _xA/_xB names (backward compatible)
      * @param {File} file - CSV file object
      * @returns {Promise<Array>} Promise resolving to array of node objects
      */
@@ -196,21 +226,23 @@
                 dynamicTyping: true,
                 skipEmptyLines: true,
                 complete: function(results) {
-                    // Ensure all required fields exist
-                    // xA = core data (ID auto-generated from Group-Node)
-                    // xB = optional modifiers with defaults
+                    // Column name translation: New clean names first, old _xA/_xB names as fallback
+                    // Internal fields still use _xA/_xB for code clarity
                     const nodes = results.data.map(row => {
-                        const group = row.Group_xA || '';
-                        const nodeName = row.Node_xA || '';
+                        // Primary fields - new names first, old as fallback
+                        const group = row.Group || row.Group_xA || '';
+                        const nodeName = row.Node || row.Node_xA || '';
+                        const id = row.ID || row.ID_xA || '';
+
                         return {
                             Group_xA: group,
                             Node_xA: nodeName,
-                            ID_xA: row.ID_xA || `${group}-${nodeName}`,
-                            Linked_Node_ID_xA: row['Linked_Node_ID_xA'] || row['Linked Node ID_xA'] || '',
-                            Hidden_Node_xB: parseInt(row.Hidden_Node_xB) || 0,
-                            Hidden_Link_xB: parseInt(row.Hidden_Link_xB) || 0,
-                            Link_Label_xB: row['Link_Label_xB'] || row['Link Label_xB'] || '',
-                            Link_Arrow_xB: row['Link_Arrow_xB'] || row['Link Arrow_xB'] || 'To',
+                            ID_xA: id || `${group}-${nodeName}`,  // Auto-generate ID if not provided
+                            Linked_Node_ID_xA: row.Linked_To || row['Linked To'] || row['Linked_Node_ID_xA'] || row['Linked Node ID_xA'] || '',
+                            Hidden_Node_xB: parseInt(row.Hide_Node || row['Hide Node'] || row.Hidden_Node_xB || row['Hidden Node_xB']) || 0,
+                            Hidden_Link_xB: parseInt(row.Hide_Link || row['Hide Link'] || row.Hidden_Link_xB || row['Hidden Link_xB']) || 0,
+                            Link_Label_xB: row.Link_Label || row['Link Label'] || row['Link_Label_xB'] || row['Link Label_xB'] || '',
+                            Link_Arrow_xB: row.Arrow || row['Link_Arrow_xB'] || row['Link Arrow_xB'] || 'To',
                             Group_Info: row.Group_Info || '',
                             Node_Info: row.Node_Info || '',
                             Link_Info: row.Link_Info || ''
@@ -321,22 +353,22 @@
         xml += '         xmlns:yed="http://www.yworks.com/xml/yed/3"\n';
         xml += '         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://www.yworks.com/xml/schema/graphml/1.1/ygraphml.xsd">\n';
 
-        // Define yEd data keys
+        // Define yEd data keys (using clean attribute names)
         xml += '  <key id="d0" for="port" yfiles.type="portgraphics"/>\n';
         xml += '  <key id="d1" for="port" yfiles.type="portgeometry"/>\n';
         xml += '  <key id="d2" for="port" yfiles.type="portuserdata"/>\n';
-        xml += '  <key id="d3" for="node" attr.name="Group_xA" attr.type="string"/>\n';
-        xml += '  <key id="d4" for="node" attr.name="Node_xA" attr.type="string"/>\n';
-        xml += '  <key id="d5" for="node" attr.name="ID_xA" attr.type="string"/>\n';
+        xml += '  <key id="d3" for="node" attr.name="Group" attr.type="string"/>\n';
+        xml += '  <key id="d4" for="node" attr.name="Node" attr.type="string"/>\n';
+        xml += '  <key id="d5" for="node" attr.name="ID" attr.type="string"/>\n';
         xml += '  <key id="d6" for="node" attr.name="url" attr.type="string"/>\n';
         xml += '  <key id="d7" for="node" attr.name="description" attr.type="string"/>\n';
         xml += '  <key id="d8" for="node" yfiles.type="nodegraphics"/>\n';
         xml += '  <key id="d9" for="graphml" yfiles.type="resources"/>\n';
-        xml += '  <key id="d10" for="edge" attr.name="Link_Label_xB" attr.type="string"/>\n';
+        xml += '  <key id="d10" for="edge" attr.name="Link_Label" attr.type="string"/>\n';
         xml += '  <key id="d11" for="edge" attr.name="url" attr.type="string"/>\n';
         xml += '  <key id="d12" for="edge" attr.name="description" attr.type="string"/>\n';
         xml += '  <key id="d13" for="edge" yfiles.type="edgegraphics"/>\n';
-        xml += '  <key id="d14" for="edge" attr.name="Link_Arrow_xB" attr.type="string"/>\n';
+        xml += '  <key id="d14" for="edge" attr.name="Arrow" attr.type="string"/>\n';
 
         xml += '  <graph id="G" edgedefault="directed">\n';
 
