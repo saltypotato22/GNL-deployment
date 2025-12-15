@@ -3358,59 +3358,59 @@
                         ]),
                         React.createElement('button', {
                             key: 'txt', onClick: handleExportTXT,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "TXT")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500 dark:text-gray-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "TXT")
                         ]),
                         React.createElement('button', {
                             key: 'clipboard', onClick: handleCopyToClipboard,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-green-50 rounded border border-gray-200 hover:border-green-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-green-50 dark:hover:bg-green-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-green-300 dark:hover:border-green-700"
                         }, [
-                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Clipboard")
+                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Clipboard")
                         ]),
                         React.createElement('button', {
                             key: 'excel', onClick: handleExportExcel,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excel")
+                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excel")
                         ]),
                         React.createElement('button', {
                             key: 'json', onClick: handleExportJSON,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "JSON")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600 dark:text-yellow-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "JSON")
                         ]),
                         React.createElement('button', {
                             key: 'mermaid', onClick: handleExportMermaid,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Mermaid")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600 dark:text-pink-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Mermaid")
                         ]),
                         React.createElement('button', {
                             key: 'graphml', onClick: handleExportGraphML,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "GraphML")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600 dark:text-orange-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "GraphML")
                         ]),
                         React.createElement('button', {
                             key: 'dot', onClick: handleExportDOT,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "DOT")
                         ]),
                         React.createElement('button', {
                             key: 'excalidraw', onClick: handleExportExcalidraw,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excalidraw")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600 dark:text-indigo-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excalidraw")
                         ])
                     ]),
 
@@ -3421,96 +3421,96 @@
                     }, [
                         React.createElement('div', {
                             key: 'canvas-header',
-                            className: "text-center pb-2 border-b border-blue-200"
+                            className: "text-center pb-2 border-b border-blue-200 dark:border-blue-700"
                         }, [
-                            React.createElement('div', { key: 'c1', className: "font-bold text-blue-700" }, "Canvas"),
-                            React.createElement('div', { key: 'c2', className: "text-xs text-blue-500" }, "(visible only)")
+                            React.createElement('div', { key: 'c1', className: "font-bold text-blue-700 dark:text-blue-400" }, "Canvas"),
+                            React.createElement('div', { key: 'c2', className: "text-xs text-blue-500 dark:text-blue-300" }, "(visible only)")
                         ]),
                         React.createElement('button', {
                             key: 'csv', onClick: handleExportCSVCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600 dark:text-gray-300" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "CSV")
                         ]),
                         React.createElement('button', {
                             key: 'txt', onClick: handleExportTXTCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "TXT")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500 dark:text-gray-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "TXT")
                         ]),
                         React.createElement('button', {
                             key: 'clipboard', onClick: handleCopyToClipboardCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-green-100 rounded border border-blue-200 hover:border-green-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-green-100 dark:hover:bg-green-900/30 rounded border border-blue-200 dark:border-blue-700 hover:border-green-300 dark:hover:border-green-700"
                         }, [
-                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Clipboard")
+                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Clipboard")
                         ]),
                         React.createElement('button', {
                             key: 'excel', onClick: handleExportExcelCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excel")
+                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excel")
                         ]),
                         React.createElement('button', {
                             key: 'json', onClick: handleExportJSONCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "JSON")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600 dark:text-yellow-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "JSON")
                         ]),
                         React.createElement('button', {
                             key: 'mermaid', onClick: handleExportMermaidCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Mermaid")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600 dark:text-pink-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Mermaid")
                         ]),
                         React.createElement('button', {
                             key: 'graphml', onClick: handleExportGraphMLCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "GraphML")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600 dark:text-orange-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "GraphML")
                         ]),
                         React.createElement('button', {
                             key: 'dot', onClick: handleExportDOTCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "DOT")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "DOT")
                         ]),
                         React.createElement('button', {
                             key: 'excalidraw', onClick: handleExportExcalidrawCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "Excalidraw")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600 dark:text-indigo-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excalidraw")
                         ]),
                         // Separator for image formats
-                        React.createElement('div', { key: 'sep', className: "border-t border-blue-200 pt-2 mt-2" }),
+                        React.createElement('div', { key: 'sep', className: "border-t border-blue-200 dark:border-blue-700 pt-2 mt-2" }),
                         React.createElement('button', {
                             key: 'png', onClick: handleExportPNG,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(Image, { key: 'i', size: 14, className: "text-blue-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "PNG")
+                            React.createElement(Image, { key: 'i', size: 14, className: "text-blue-600 dark:text-blue-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "PNG")
                         ]),
                         React.createElement('button', {
                             key: 'svg', onClick: handleExportSVG,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(Image, { key: 'i', size: 14, className: "text-purple-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "SVG")
+                            React.createElement(Image, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "SVG")
                         ]),
                         React.createElement('button', {
                             key: 'pdf', onClick: handleExportPDF,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 hover:border-blue-300"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-red-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "PDF")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-red-600 dark:text-red-400" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "PDF")
                         ])
                     ])
                 ]),
@@ -3518,7 +3518,7 @@
                 // Red disclaimer at bottom
                 React.createElement('p', {
                     key: 'disclaimer',
-                    className: "text-xs text-red-600 mb-3 pt-3 border-t border-red-200"
+                    className: "text-xs text-red-600 dark:text-red-400 mb-3 pt-3 border-t border-red-200 dark:border-red-800"
                 }, "Disclaimer: This application is provided as-is for demonstration purposes only. The developers assume no responsibility for data loss, errors, or any damages resulting from its use."),
 
                 React.createElement('button', {
@@ -3576,27 +3576,27 @@
 
                 // Data Model
                 React.createElement('div', { key: 'data-model', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Data Model"),
-                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Group | Node | Linked To | Label"),
-                    React.createElement('p', { key: 'id', className: "text-xs text-gray-500 mt-1" }, "ID = Group-Node (auto-generated, refs auto-update on rename)")
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Data Model"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600 dark:text-gray-300" }, "Group | Node | Linked To | Label"),
+                    React.createElement('p', { key: 'id', className: "text-xs text-gray-500 dark:text-gray-400 mt-1" }, "ID = Group-Node (auto-generated, refs auto-update on rename)")
                 ]),
 
                 // Group Operations
                 React.createElement('div', { key: 'group-ops', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Group Operations"),
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Group Operations"),
                     React.createElement('table', { key: 't', className: "w-full text-xs" }, [
                         React.createElement('tbody', { key: 'tb' }, [
                             React.createElement('tr', { key: '1' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Collapse / Expand"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "chevron on row (table only)")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "Collapse / Expand"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "chevron on row (table only)")
                             ]),
                             React.createElement('tr', { key: '2' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Hide / Show"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "eye on row (canvas)")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "Hide / Show"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "eye on row (canvas)")
                             ]),
                             React.createElement('tr', { key: '3' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "All groups"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "icons in header")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "All groups"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "icons in header")
                             ])
                         ])
                     ])
@@ -3604,20 +3604,20 @@
 
                 // Node Operations
                 React.createElement('div', { key: 'node-ops', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Node Operations"),
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Node Operations"),
                     React.createElement('table', { key: 't', className: "w-full text-xs" }, [
                         React.createElement('tbody', { key: 'tb' }, [
                             React.createElement('tr', { key: '1' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Delete"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "trash icon (* if referenced)")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "Delete"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "trash icon (* if referenced)")
                             ]),
                             React.createElement('tr', { key: '2' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Duplicate"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "copy icon on row")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "Duplicate"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "copy icon on row")
                             ]),
                             React.createElement('tr', { key: '3' }, [
-                                React.createElement('td', { key: 'k', className: "font-medium pr-2" }, "Clear link"),
-                                React.createElement('td', { key: 'v', className: "text-gray-600" }, "X next to Linked To")
+                                React.createElement('td', { key: 'k', className: "font-medium pr-2 text-gray-700 dark:text-gray-200" }, "Clear link"),
+                                React.createElement('td', { key: 'v', className: "text-gray-600 dark:text-gray-300" }, "X next to Linked To")
                             ])
                         ])
                     ])
@@ -3625,32 +3625,32 @@
 
                 // Visual Link Mode
                 React.createElement('div', { key: 'link-mode', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Visual Link Mode"),
-                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Click link icon \u2192 click target \u2192 linked. Esc to cancel.")
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Visual Link Mode"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600 dark:text-gray-300" }, "Click link icon \u2192 click target \u2192 linked. Esc to cancel.")
                 ]),
 
                 // Canvas
                 React.createElement('div', { key: 'canvas', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Canvas"),
-                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "Drag = pan | Scroll = zoom | Fit = reset")
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Canvas"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600 dark:text-gray-300" }, "Drag = pan | Scroll = zoom | Fit = reset")
                 ]),
 
                 // Validation
                 React.createElement('div', { key: 'validation', className: "mb-4" }, [
-                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 mb-2" }, "Validation"),
-                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600" }, "\uD83D\uDD34 Broken link | \uD83D\uDFE1 Duplicate ID")
+                    React.createElement('h4', { key: 'h', className: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2" }, "Validation"),
+                    React.createElement('p', { key: 'p', className: "text-xs text-gray-600 dark:text-gray-300" }, "\uD83D\uDD34 Broken link | \uD83D\uDFE1 Duplicate ID")
                 ]),
 
                 // Disclaimer
                 React.createElement('p', {
                     key: 'disclaimer',
-                    className: "text-xs text-red-600 mt-4 pt-3 border-t border-gray-200"
+                    className: "text-xs text-red-600 dark:text-red-400 mt-4 pt-3 border-t border-gray-200 dark:border-gray-700"
                 }, "Disclaimer: This application is provided as-is for demonstration purposes. The developers assume no responsibility for data loss, errors, or any damages resulting from its use."),
 
                 React.createElement('button', {
                     key: 'close',
                     onClick: () => setShowHelpModal(false),
-                    className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    className: "mt-4 w-full px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-500"
                 }, "Close")
             ])),
 
@@ -3707,7 +3707,7 @@
 
                 return React.createElement('div', {
                     key: 'context-menu',
-                    className: "fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-48",
+                    className: "fixed z-50 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 py-1 min-w-48",
                     style: {
                         left: contextMenu.position.x,
                         top: contextMenu.position.y
@@ -3718,19 +3718,19 @@
                     // Menu header (varies by type)
                     React.createElement('div', {
                         key: 'header',
-                        className: "px-3 py-1.5 text-xs text-gray-500 border-b border-gray-100 truncate max-w-64"
+                        className: "px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 truncate max-w-64"
                     }, headerText),
 
                     // Group-specific: If no linked groups, show message
                     isGroup && !hasLinkedGroups && React.createElement('div', {
                         key: 'no-links',
-                        className: "px-3 py-2 text-sm text-gray-400 italic"
+                        className: "px-3 py-2 text-sm text-gray-400 dark:text-gray-500 italic"
                     }, "No linked groups"),
 
                     // Group-specific: Show Linked Groups (only if has linked groups)
                     isGroup && hasLinkedGroups && React.createElement('button', {
                         key: 'show-linked',
-                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        className: "w-full px-3 py-2 text-sm text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2",
                         onClick: () => showLinkedGroups(contextMenu.groupName)
                     }, [
                         React.createElement(Eye, { key: 'icon', size: 14 }),
@@ -3740,7 +3740,7 @@
                     // Group-specific: Show ONLY Linked Groups (only if has linked groups)
                     isGroup && hasLinkedGroups && React.createElement('button', {
                         key: 'show-only-linked',
-                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        className: "w-full px-3 py-2 text-sm text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2",
                         onClick: () => showOnlyLinkedGroups(contextMenu.groupName)
                     }, [
                         React.createElement(EyeOff, { key: 'icon', size: 14 }),
@@ -3750,13 +3750,13 @@
                     // Separator (for groups with options, or always for node/edge)
                     (isGroup || isNode || isEdge) && React.createElement('div', {
                         key: 'separator',
-                        className: "border-t border-gray-100 my-1"
+                        className: "border-t border-gray-100 dark:border-gray-700 my-1"
                     }),
 
                     // Show Info - available for all types, calls appropriate function
                     React.createElement('button', {
                         key: 'show-info',
-                        className: "w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2",
+                        className: "w-full px-3 py-2 text-sm text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2",
                         onClick: () => {
                             if (isGroup) showGroupInfoFromContext(contextMenu.groupName);
                             else if (isNode) showNodeInfoFromContext(contextMenu.nodeId);
@@ -3785,7 +3785,7 @@
                 // Main popup content
                 React.createElement('div', {
                     key: 'modal-content',
-                    className: "bg-white rounded-lg shadow-xl border border-gray-300 w-full h-full flex flex-col relative",
+                    className: "bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-300 dark:border-gray-600 w-full h-full flex flex-col relative",
                     style: { cursor: infoDragging ? 'grabbing' : 'grab' }
                 }, [
                     // X button (Cancel - restores original values)
@@ -3874,7 +3874,7 @@
                             infoEditedRef.current = false;
                             setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
                         },
-                        className: "absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded z-10",
+                        className: "absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded z-10",
                         title: "Cancel"
                     }, React.createElement(X, { size: 14 })),
 
@@ -3904,8 +3904,8 @@
                                     },
                                     disabled: !hasLinkedGroups,
                                     className: hasLinkedGroups
-                                        ? "px-3 py-1.5 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1"
-                                        : "px-3 py-1.5 text-xs bg-gray-50 text-gray-400 border border-gray-200 rounded cursor-not-allowed flex items-center gap-1",
+                                        ? "px-3 py-1.5 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-700 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 flex items-center gap-1"
+                                        : "px-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-700 text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-gray-600 rounded cursor-not-allowed flex items-center gap-1",
                                     style: { cursor: hasLinkedGroups ? 'pointer' : 'not-allowed' },
                                     title: hasLinkedGroups ? 'Unhide all groups that share links with this group' : 'No linked groups'
                                 }, [
@@ -3920,8 +3920,8 @@
                                     },
                                     disabled: !hasLinkedGroups,
                                     className: hasLinkedGroups
-                                        ? "px-3 py-1.5 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1"
-                                        : "px-3 py-1.5 text-xs bg-gray-50 text-gray-400 border border-gray-200 rounded cursor-not-allowed flex items-center gap-1",
+                                        ? "px-3 py-1.5 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-700 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 flex items-center gap-1"
+                                        : "px-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-700 text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-gray-600 rounded cursor-not-allowed flex items-center gap-1",
                                     style: { cursor: hasLinkedGroups ? 'pointer' : 'not-allowed' },
                                     title: hasLinkedGroups ? 'Hide all groups except this one and its linked groups' : 'No linked groups'
                                 }, [
@@ -3942,7 +3942,7 @@
                                         });
                                         setHiddenGroups(newHidden);
                                     },
-                                    className: "px-3 py-1.5 text-xs bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 flex items-center gap-1",
+                                    className: "px-3 py-1.5 text-xs bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-700 rounded hover:bg-orange-100 dark:hover:bg-orange-900/50 flex items-center gap-1",
                                     style: { cursor: 'pointer' },
                                     title: 'Hide all other groups, show only this one'
                                 }, [
@@ -3953,13 +3953,13 @@
                             // Group Name label
                             React.createElement('label', {
                                 key: 'group-label',
-                                className: "text-xs text-gray-500 mb-1"
+                                className: "text-xs text-gray-500 dark:text-gray-400 mb-1"
                             }, "Group Name"),
                             // Editable Group name input
                             React.createElement('input', {
                                 key: 'group-name',
                                 type: 'text',
-                                className: "text-sm font-medium text-gray-800 mb-2 px-2 py-1 border border-gray-300 rounded w-full",
+                                className: "text-sm font-medium text-gray-800 dark:text-gray-100 mb-2 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded w-full bg-white dark:bg-gray-700",
                                 value: groupName,
                                 onChange: (e) => {
                                     const newGroupName = e.target.value;
@@ -4009,18 +4009,18 @@
                             ...(groupInfoInconsistencies.has(groupName) ? [
                                 React.createElement('div', {
                                     key: 'inconsistency-warning',
-                                    className: "bg-red-100 text-red-700 px-2 py-1 rounded text-xs mb-2"
+                                    className: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-2 py-1 rounded text-xs mb-2"
                                 }, "Inconsistent values - editing will sync")
                             ] : []),
                             // Group Info label
                             React.createElement('label', {
                                 key: 'group-info-label',
-                                className: "text-xs text-gray-500 mb-1"
+                                className: "text-xs text-gray-500 dark:text-gray-400 mb-1"
                             }, "Group Info"),
                             // Textarea
                             React.createElement('textarea', {
                                 key: 'group-textarea',
-                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                className: "flex-1 w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 resize-none min-h-0",
                                 placeholder: 'Enter group description...',
                                 style: { cursor: 'text' },
                                 value: (() => {
@@ -4046,18 +4046,18 @@
                             // Group label (read-only)
                             React.createElement('div', {
                                 key: 'node-group',
-                                className: "text-xs text-gray-500 mb-2"
+                                className: "text-xs text-gray-500 dark:text-gray-400 mb-2"
                             }, `Group: ${nodeData?.Group_xA || ''}`),
                             // Node Name label
                             React.createElement('label', {
                                 key: 'node-name-label',
-                                className: "text-xs text-gray-500 mb-1"
+                                className: "text-xs text-gray-500 dark:text-gray-400 mb-1"
                             }, "Node Name"),
                             // Editable Node Name input
                             React.createElement('input', {
                                 key: 'node-name',
                                 type: 'text',
-                                className: "text-sm font-medium text-gray-800 mb-2 px-2 py-1 border border-gray-300 rounded w-full",
+                                className: "text-sm font-medium text-gray-800 dark:text-gray-100 mb-2 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded w-full bg-white dark:bg-gray-700",
                                 value: nodeData?.Node_xA || '',
                                 onChange: (e) => {
                                     const newNodeName = e.target.value;
@@ -4083,12 +4083,12 @@
                             // Node Info label
                             React.createElement('label', {
                                 key: 'node-info-label',
-                                className: "text-xs text-gray-500 mb-1"
+                                className: "text-xs text-gray-500 dark:text-gray-400 mb-1"
                             }, "Node Info"),
                             // Node Info textarea
                             React.createElement('textarea', {
                                 key: 'node-textarea',
-                                className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                                className: "flex-1 w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 resize-none min-h-0",
                                 placeholder: 'Enter node notes...',
                                 style: { cursor: 'text' },
                                 value: nodeData?.Node_Info || '',
@@ -4107,16 +4107,16 @@
                         // Edge-only view (right-click on link in canvas)
                         React.createElement('label', {
                             key: 'link-label',
-                            className: "text-xs text-gray-500 mb-1"
+                            className: "text-xs text-gray-500 dark:text-gray-400 mb-1"
                         }, "Link Info"),
                         React.createElement('div', {
                             key: 'link-target',
-                            className: "text-sm font-medium text-gray-800 mb-2 truncate",
+                            className: "text-sm font-medium text-gray-800 dark:text-gray-100 mb-2 truncate",
                             title: nodes[infoPopup.nodeIndex]?.ID_xA + ' → ' + (nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA || '')
                         }, nodes[infoPopup.nodeIndex]?.ID_xA + ' → ' + (nodes[infoPopup.nodeIndex]?.Linked_Node_ID_xA || '')),
                         React.createElement('textarea', {
                             key: 'link-textarea',
-                            className: "flex-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none min-h-0",
+                            className: "flex-1 w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 resize-none min-h-0",
                             placeholder: 'Enter link notes...',
                             style: { cursor: 'text' },
                             value: nodes[infoPopup.nodeIndex]?.Link_Info || '',
