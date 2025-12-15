@@ -11,7 +11,7 @@
         const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
         // Get icons from namespace
-        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ChevronRight, RotateCcw, RotateCw, Copy, Sparkles, Send, Settings, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
+        const { Upload, Download, Plus, Trash2, ZoomIn, ZoomOut, Info, AlertCircle, FileText, Image, File, Link, Link2, X, Eye, EyeOff, Maximize2, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ChevronRight, RotateCcw, RotateCw, Copy, Sparkles, Send, Settings, Sun, Moon, LayoutCanvasPriority, LayoutBalanced, LayoutTablePriority } = window.GraphApp.Icons;
 
         // State Management - Load first demo by default
         const [nodes, setNodes] = useState(() => {
@@ -41,6 +41,7 @@
         const [hideLinkedNodes, setHideLinkedNodes] = useState(false);
         const [hideLinks, setHideLinks] = useState(false);
         const [hideLinkLabels, setHideLinkLabels] = useState(false);
+        const [showGroupChain, setShowGroupChain] = useState(false);
         const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
         const [panStart, setPanStart] = useState({ x: 0, y: 0 });
         const [prevHideUnlinked, setPrevHideUnlinked] = useState(false);
@@ -49,6 +50,15 @@
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
         const [showDemoMenu, setShowDemoMenu] = useState(false);
+
+        // Theme state (light/dark mode)
+        const [theme, setTheme] = useState(() => {
+            try {
+                const saved = localStorage.getItem('theme');
+                if (saved) return saved;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            } catch { return 'light'; }
+        });
         const [infoPopup, setInfoPopup] = useState({ open: false, type: null, groupName: null, nodeIndex: null });
         // Info popup position and size (draggable/resizable)
         const [infoPopupPos, setInfoPopupPos] = useState({ x: 150, y: 100 });
@@ -185,6 +195,42 @@
             document.addEventListener('click', handleClick);
             return () => document.removeEventListener('click', handleClick);
         }, [showDemoMenu]);
+
+        // Theme effect: Apply dark class to HTML element and persist to localStorage
+        useEffect(() => {
+            const root = document.documentElement;
+            if (theme === 'dark') {
+                root.classList.add('dark');
+            } else {
+                root.classList.remove('dark');
+            }
+            try { localStorage.setItem('theme', theme); } catch {}
+
+            // Update Cytoscape graph colors
+            if (window.GraphApp.core.updateCytoscapeTheme) {
+                window.GraphApp.core.updateCytoscapeTheme(theme);
+            }
+        }, [theme]);
+
+        // Theme: Listen for system preference changes (only when no saved preference)
+        useEffect(() => {
+            const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+            const handler = (e) => {
+                // Only update if user hasn't explicitly set a preference
+                try {
+                    if (!localStorage.getItem('theme')) {
+                        setTheme(e.matches ? 'dark' : 'light');
+                    }
+                } catch {}
+            };
+            mediaQuery.addEventListener('change', handler);
+            return () => mediaQuery.removeEventListener('change', handler);
+        }, []);
+
+        // Toggle theme function
+        const toggleTheme = useCallback(() => {
+            setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+        }, []);
 
         // Connect window callback for group right-click (from Cytoscape) - opens info popup directly
         useEffect(() => {
@@ -911,8 +957,14 @@
                     hideLinkedNodes,
                     hideLinks,
                     hideLinkLabels,
+                    showGroupChain,
                     'mermaid-container'
                 );
+
+                // Apply current theme colors to Cytoscape graph
+                if (window.GraphApp.core.updateCytoscapeTheme) {
+                    window.GraphApp.core.updateCytoscapeTheme(theme);
+                }
 
                 // Update tracking state
                 if (hideUnlinkedChanged) {
@@ -940,7 +992,7 @@
                 setErrors(prev => [...prev, 'Failed to render diagram: ' + error.message]);
                 setIsRendering(false);
             }
-        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, prevHideUnlinked]);
+        }, [nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, showGroupChain, prevHideUnlinked, theme]);
 
         // PERFORMANCE: Debounce diagram rendering (300ms) - table stays responsive
         useEffect(() => {
@@ -951,7 +1003,7 @@
                 return () => clearTimeout(timeoutId);
             }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [nodes, settings.direction, settings.curve, settings.curveAmount, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels]);
+        }, [nodes, settings.direction, settings.curve, settings.curveAmount, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, showGroupChain, theme]);
 
         // Zoom controls - use Cytoscape's built-in zoom
         const handleZoomIn = useCallback(() => {
@@ -2070,6 +2122,11 @@
             setHideLinkLabels(!hideLinkLabels);
         }, [hideLinkLabels]);
 
+        // Toggle group chain visualization (shows table-order connections between groups)
+        const toggleGroupChain = useCallback(() => {
+            setShowGroupChain(!showGroupChain);
+        }, [showGroupChain]);
+
         // Sort table
         const handleSort = useCallback((column) => {
             const newDirection = sortColumn === column && sortDirection === 'asc' ? 'desc' : 'asc';
@@ -2241,12 +2298,12 @@
 
         // Render main UI
         return React.createElement('div', {
-            className: "h-screen flex flex-col bg-gray-100 overflow-hidden"
+            className: "h-screen flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden"
         }, [
             // Toolbar
             React.createElement('div', {
                 key: 'toolbar',
-                className: "bg-white shadow-sm border-b"
+                className: "bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700"
             }, [
                 React.createElement('div', {
                     key: 'toolbar-content',
@@ -2260,9 +2317,18 @@
                         React.createElement('button', {
                             key: 'help-btn',
                             onClick: () => setShowHelpModal(true),
-                            className: "flex items-center justify-center w-6 h-6 text-sm font-bold text-blue-600 bg-blue-100 hover:bg-blue-200 rounded-full mr-2",
+                            className: "flex items-center justify-center w-6 h-6 text-sm font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full mr-1",
                             title: "Help"
                         }, "?"),
+
+                        // Theme toggle button (light/dark mode)
+                        React.createElement('button', {
+                            key: 'theme-toggle',
+                            onClick: toggleTheme,
+                            className: "flex items-center justify-center w-6 h-6 text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full mr-2",
+                            title: theme === 'dark' ? "Switch to light mode" : "Switch to dark mode",
+                            'aria-label': theme === 'dark' ? "Switch to light mode" : "Switch to dark mode"
+                        }, React.createElement(theme === 'dark' ? Sun : Moon, { size: 14 })),
 
                         // File operations
                         React.createElement('div', {
@@ -2271,7 +2337,7 @@
                         }, [
                             React.createElement('label', {
                                 key: 'import',
-                                className: "flex items-center px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer"
+                                className: "flex items-center px-2 py-1 text-xs bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700 cursor-pointer"
                             }, [
                                 React.createElement(Upload, {
                                     key: 'icon',
@@ -2292,7 +2358,7 @@
                             React.createElement('button', {
                                 key: 'add',
                                 onClick: handleAddNode,
-                                className: "flex items-center px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                                className: "flex items-center px-2 py-1 text-xs bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700"
                             }, [
                                 React.createElement(Plus, {
                                     key: 'icon',
@@ -2307,7 +2373,7 @@
                                 React.createElement('button', {
                                     key: 'ai-generate',
                                     onClick: () => setShowAIModal(true),
-                                    className: "flex items-center px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600"
+                                    className: "flex items-center px-2 py-1 text-xs bg-purple-500 dark:bg-purple-600 text-white rounded hover:bg-purple-600 dark:hover:bg-purple-700"
                                 }, [
                                     React.createElement(Sparkles, {
                                         key: 'icon',
@@ -2329,8 +2395,8 @@
                                 onClick: handleUndo,
                                 disabled: !canUndo,
                                 className: canUndo
-                                    ? "p-1.5 text-gray-600 hover:bg-gray-100 rounded"
-                                    : "p-1.5 text-gray-300 cursor-not-allowed",
+                                    ? "p-1.5 text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                                    : "p-1.5 text-gray-300 dark:text-gray-500 cursor-not-allowed",
                                 title: "Undo (Ctrl+Z)"
                             }, React.createElement(RotateCcw, { size: 16 })),
                             React.createElement('button', {
@@ -2338,15 +2404,15 @@
                                 onClick: handleRedo,
                                 disabled: !canRedo,
                                 className: canRedo
-                                    ? "p-1.5 text-gray-600 hover:bg-gray-100 rounded"
-                                    : "p-1.5 text-gray-300 cursor-not-allowed",
+                                    ? "p-1.5 text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                                    : "p-1.5 text-gray-300 dark:text-gray-500 cursor-not-allowed",
                                 title: "Redo (Ctrl+Shift+Z)"
                             }, React.createElement(RotateCw, { size: 16 }))
                         ]),
 
                         React.createElement('div', {
                             key: 'div1',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
 
                         // Export button
@@ -2354,7 +2420,7 @@
                             key: 'export',
                             onClick: () => setShowExportModal(true),
                             disabled: nodes.length === 0,
-                            className: `flex items-center px-2 py-1 text-xs rounded ${nodes.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-400 text-gray-200'}`
+                            className: `flex items-center px-2 py-1 text-xs rounded ${nodes.length > 0 ? 'bg-blue-500 dark:bg-blue-600 text-white hover:bg-blue-600 dark:hover:bg-blue-700' : 'bg-gray-400 dark:bg-gray-600 text-gray-200 dark:text-gray-400'}`
                         }, [
                             React.createElement(Download, {
                                 key: 'icon',
@@ -2366,14 +2432,14 @@
 
                         React.createElement('div', {
                             key: 'div-layout',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
 
                         // Panel layout control (optimal fit only)
                         React.createElement('button', {
                             key: 'layout-balanced',
                             onClick: calculateOptimalTableWidth,
-                            className: "w-8 h-8 flex items-center justify-center hover:bg-gray-100 text-gray-600",
+                            className: "w-8 h-8 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300",
                             title: "Optimal fit (auto-calculate to prevent truncation)"
                         }, [
                             React.createElement(LayoutBalanced, { size: 20 })
@@ -2382,7 +2448,7 @@
                         // Demos dropdown
                         React.createElement('div', {
                             key: 'div2',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
                         React.createElement('div', {
                             key: 'demos-dropdown',
@@ -2399,12 +2465,12 @@
                             ]),
                             showDemoMenu && React.createElement('div', {
                                 key: 'demos-menu',
-                                className: "absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded shadow-lg z-50 min-w-[140px]"
+                                className: "absolute top-full left-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg z-50 min-w-[140px]"
                             }, Object.keys(window.GraphApp.data.demos).map(demoName =>
                                 React.createElement('button', {
                                     key: demoName,
                                     onClick: () => loadDemo(demoName),
-                                    className: "block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 first:rounded-t last:rounded-b"
+                                    className: "block w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 first:rounded-t last:rounded-b"
                                 }, demoName)
                             ))
                         ]),
@@ -2412,7 +2478,7 @@
                         // Move row up/down buttons
                         React.createElement('div', {
                             key: 'div-move',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
                         React.createElement('button', {
                             key: 'move-up',
@@ -2435,7 +2501,7 @@
 
                         React.createElement('div', {
                             key: 'div3',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
 
                         // Layout algorithm selector
@@ -2460,7 +2526,7 @@
                                     window.GraphApp.core.runCompactHorizontalLayout();
                                 }
                             },
-                            className: "px-2 py-1 text-xs border border-gray-300 rounded",
+                            className: "px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-gray-200",
                             title: "Layout algorithm - Smart for organic clustering, Vertical/Horizontal for strips, Compact for square-ish grid"
                         }, [
                             React.createElement('option', { key: 'smart', value: 'smart' }, "◎ Smart"),
@@ -2472,7 +2538,7 @@
 
                         React.createElement('div', {
                             key: 'div-curve-sep',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
 
                         // Edge Style selector with curve amount control
@@ -2484,7 +2550,7 @@
                                 key: 'curve-selector',
                                 value: settings.curve,
                                 onChange: (e) => setSettings({ ...settings, curve: e.target.value }),
-                                className: "px-2 py-1 text-xs border border-gray-300 rounded-l",
+                                className: "px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-l bg-white dark:bg-gray-700 dark:text-gray-200",
                                 title: "Edge style"
                             }, [
                                 React.createElement('option', { key: 'basis', value: 'basis' }, "⌇ Curved"),
@@ -2494,21 +2560,21 @@
                             ...(settings.curve === 'basis' ? [
                                 React.createElement('div', {
                                     key: 'curve-amount-controls',
-                                    className: "flex flex-col border border-l-0 border-gray-300 rounded-r bg-white",
+                                    className: "flex flex-col border border-l-0 border-gray-300 dark:border-gray-600 rounded-r bg-white dark:bg-gray-700",
                                     title: `Curve amount: ${settings.curveAmount}px (10-100)`
                                 }, [
                                     React.createElement('button', {
                                         key: 'curve-up',
                                         onClick: () => setSettings({ ...settings, curveAmount: Math.min(100, settings.curveAmount + 10) }),
                                         disabled: settings.curveAmount >= 100,
-                                        className: "px-0.5 h-3 hover:bg-gray-100 disabled:opacity-30 flex items-center justify-center",
+                                        className: "px-0.5 h-3 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-30 flex items-center justify-center text-gray-600 dark:text-gray-300",
                                         title: "Increase curve"
                                     }, React.createElement(ChevronUp, { size: 10 })),
                                     React.createElement('button', {
                                         key: 'curve-down',
                                         onClick: () => setSettings({ ...settings, curveAmount: Math.max(10, settings.curveAmount - 10) }),
                                         disabled: settings.curveAmount <= 10,
-                                        className: "px-0.5 h-3 hover:bg-gray-100 disabled:opacity-30 flex items-center justify-center",
+                                        className: "px-0.5 h-3 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-30 flex items-center justify-center text-gray-600 dark:text-gray-300",
                                         title: "Decrease curve"
                                     }, React.createElement(ChevronDown, { size: 10 }))
                                 ])
@@ -2517,7 +2583,7 @@
 
                         React.createElement('div', {
                             key: 'div4',
-                            className: "w-px h-6 bg-gray-300"
+                            className: "w-px h-6 bg-gray-300 dark:bg-gray-600"
                         }),
 
                         // Zoom controls
@@ -2529,21 +2595,21 @@
                                 key: 'zoom-out',
                                 onClick: handleZoomOut,
                                 disabled: settings.zoom <= 10,
-                                className: "p-1 hover:bg-gray-100 rounded disabled:opacity-50",
+                                className: "p-1 text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded disabled:opacity-50",
                                 title: "Zoom out (10% min)"
                             }, [
                                 React.createElement(ZoomOut, { size: 12 })
                             ]),
                             React.createElement('span', {
                                 key: 'zoom-value',
-                                className: "text-xs text-gray-600 w-14 text-center",
+                                className: "text-xs text-gray-600 dark:text-gray-200 w-14 text-center",
                                 title: "Zoom level (10%-500%)"
                             }, settings.zoom + '%'),
                             React.createElement('button', {
                                 key: 'zoom-in',
                                 onClick: handleZoomIn,
                                 disabled: settings.zoom >= 500,
-                                className: "p-1 hover:bg-gray-100 rounded disabled:opacity-50",
+                                className: "p-1 text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded disabled:opacity-50",
                                 title: "Zoom in (500% max)"
                             }, [
                                 React.createElement(ZoomIn, { size: 12 })
@@ -2601,7 +2667,7 @@
                                         window.GraphApp.core.runCompactHorizontalLayout();
                                     }
                                 },
-                                className: "w-6 h-6 rounded-full border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center",
+                                className: "w-6 h-6 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 flex items-center justify-center",
                                 title: `Node spacing: ${settings.nodeSpacing}% (click to cycle: 0→25→50→75→100→0)`
                             },
                                 // Circle SVG - size varies with spacing level
@@ -2625,7 +2691,7 @@
                             React.createElement('button', {
                                 key: 'hide-unlinked',
                                 onClick: toggleHideUnlinked,
-                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideUnlinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideUnlinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`,
                                 title: hideUnlinkedNodes ? "Show all nodes" : "Hide unlinked nodes from canvas"
                             }, [
                                 React.createElement(hideUnlinkedNodes ? Eye : EyeOff, { key: 'icon', size: 12 }),
@@ -2634,7 +2700,7 @@
                             React.createElement('button', {
                                 key: 'hide-linked',
                                 onClick: toggleHideLinked,
-                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkedNodes ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`,
                                 title: hideLinkedNodes ? "Show all nodes" : "Hide linked nodes from canvas"
                             }, [
                                 React.createElement(hideLinkedNodes ? Eye : EyeOff, { key: 'icon', size: 12 }),
@@ -2643,7 +2709,7 @@
                             React.createElement('button', {
                                 key: 'hide-links',
                                 onClick: toggleHideLinks,
-                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinks ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinks ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`,
                                 title: hideLinks ? "Show link lines" : "Hide link lines from canvas"
                             }, [
                                 React.createElement(hideLinks ? Eye : EyeOff, { key: 'icon', size: 12 }),
@@ -2652,17 +2718,26 @@
                             React.createElement('button', {
                                 key: 'hide-link-labels',
                                 onClick: toggleHideLinkLabels,
-                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkLabels ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${hideLinkLabels ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`,
                                 title: hideLinkLabels ? "Show link labels" : "Hide link labels from canvas"
                             }, [
                                 React.createElement(hideLinkLabels ? Eye : EyeOff, { key: 'icon', size: 12 }),
                                 hideLinkLabels ? 'Show Labels' : 'Hide Labels'
                             ]),
+                            React.createElement('button', {
+                                key: 'group-chain',
+                                onClick: toggleGroupChain,
+                                className: `px-2 py-1 text-xs rounded flex items-center gap-1 ${showGroupChain ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`,
+                                title: showGroupChain ? "Hide group chain" : "Show group chain (table order)"
+                            }, [
+                                React.createElement(Link2, { key: 'icon', size: 12 }),
+                                'Chain'
+                            ]),
                             // Filename display (unobtrusive, only shown when file is loaded)
                             ...(currentFileName ? [
                                 React.createElement('span', {
                                     key: 'filename',
-                                    className: "text-xs text-gray-400 ml-2 truncate max-w-[150px]",
+                                    className: "text-xs text-gray-400 dark:text-gray-500 ml-2 truncate max-w-[150px]",
                                     title: currentFileName
                                 }, currentFileName)
                             ] : []),
@@ -2675,7 +2750,7 @@
                             React.createElement('button', {
                                 key: 'settings-btn',
                                 onClick: () => setShowSettingsModal(true),
-                                className: "p-1.5 rounded hover:bg-gray-100 text-gray-600",
+                                className: "p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300",
                                 title: "Settings (API Key)"
                             }, React.createElement(Settings, { size: 16 }))
                         ])
@@ -2687,7 +2762,7 @@
             ...(linkingMode.active ? [
                 React.createElement('div', {
                     key: 'linking-banner',
-                    className: "bg-blue-50 border-b border-blue-200 px-4 py-2"
+                    className: "bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 px-4 py-2"
                 }, [
                     React.createElement('div', {
                         key: 'linking-message',
@@ -2695,7 +2770,7 @@
                     }, [
                         React.createElement('div', {
                             key: 'left',
-                            className: "flex items-center gap-2 text-sm text-blue-800 font-semibold"
+                            className: "flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200 font-semibold"
                         }, [
                             React.createElement(Link, { key: 'icon', size: 16 }),
                             React.createElement('span', { key: 'text' }, showIDColumn
@@ -2705,7 +2780,7 @@
                         React.createElement('button', {
                             key: 'cancel',
                             onClick: exitLinkMode,
-                            className: "flex items-center gap-1 px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded"
+                            className: "flex items-center gap-1 px-2 py-1 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 rounded"
                         }, [
                             React.createElement(X, { key: 'icon', size: 12 }),
                             'Cancel'
@@ -2718,11 +2793,11 @@
             ...(errors.length > 0 ? [
                 React.createElement('div', {
                     key: 'errors',
-                    className: "bg-red-50 border-b border-red-200 px-4 py-2"
+                    className: "bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 px-4 py-2"
                 }, [
                     React.createElement('div', {
                         key: 'error-title',
-                        className: "flex items-center gap-2 text-sm text-red-800 font-semibold mb-1"
+                        className: "flex items-center gap-2 text-sm text-red-800 dark:text-red-200 font-semibold mb-1"
                     }, [
                         React.createElement(AlertCircle, { key: 'icon', size: 16 }),
                         React.createElement('span', { key: 'text' }, `${errors.length} Error(s) Found`)
@@ -2744,7 +2819,7 @@
                 // Left panel - Data table
                 React.createElement('div', {
                     key: 'table-panel',
-                    className: "bg-white border-r overflow-auto custom-scrollbar",
+                    className: "bg-white dark:bg-gray-800 border-r dark:border-gray-700 overflow-auto custom-scrollbar",
                     style: { width: `${tablePanelWidth}%` }
                 }, nodes.length === 0 ?
                     // Empty state
@@ -2754,14 +2829,14 @@
                     }, [
                         React.createElement('div', {
                             key: 'content',
-                            className: "text-center text-gray-500"
+                            className: "text-center text-gray-500 dark:text-gray-400"
                         }, [
                             React.createElement('p', { key: 'p', className: "mb-4" },
                                 "No data loaded. Import a file or try a demo to get started."),
                             React.createElement('button', {
                                 key: 'btn',
                                 onClick: () => loadDemo('Quick Tour'),
-                                className: "px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                                className: "px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700"
                             }, "Load Quick Tour")
                         ])
                     ]) :
@@ -2804,12 +2879,12 @@
                         ]),
                         React.createElement('thead', {
                             key: 'thead',
-                            className: "sticky top-0 bg-gray-100 border-b-2 border-gray-300 z-10"
+                            className: "sticky top-0 bg-gray-100 dark:bg-gray-700 border-b-2 border-gray-300 dark:border-gray-600 z-10"
                         }, [
                             React.createElement('tr', { key: 'tr' }, [
                                 React.createElement('th', {
                                     key: 'rownum',
-                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-500 th-separator",
+                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-500 dark:text-gray-400 th-separator",
                                     style: { width: '30px' },
                                     title: "Row number (for reference)"
                                 }, "#"),
@@ -2824,7 +2899,7 @@
                                             expandAllGroups();
                                         }
                                     },
-                                    className: "p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    className: "p-1 bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700 transition-colors",
                                     title: "Collapse/Expand All Groups"
                                 }, React.createElement(ChevronDown, { size: 16, strokeWidth: 2.5 }))),
                                 React.createElement('th', {
@@ -2838,7 +2913,7 @@
                                             showAllGroups();
                                         }
                                     },
-                                    className: "p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors",
+                                    className: "p-1 bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700 transition-colors",
                                     title: "Show/Hide All Groups"
                                 }, React.createElement(Eye, { size: 16, strokeWidth: 2 }))),
                                 React.createElement('th', {
@@ -2875,25 +2950,25 @@
                                 ])),
                                 React.createElement('th', {
                                     key: 'links',
-                                    className: "px-1 py-2 text-xs font-semibold text-center th-separator",
+                                    className: "px-1 py-2 text-xs font-semibold text-center text-gray-700 dark:text-gray-300 th-separator",
                                     title: "Number of incoming links to this node"
                                 }, "→"),
                                 ...(showIDColumn ? [
                                     React.createElement('th', {
                                         key: 'id',
-                                        className: "px-1 py-2 text-xs font-semibold text-left th-separator"
+                                        className: "px-1 py-2 text-xs font-semibold text-left text-gray-700 dark:text-gray-300 th-separator"
                                     }, "ID")
                                 ] : []),
                                 React.createElement('th', {
                                     key: 'linked',
-                                    className: "px-1 py-1 text-xs font-semibold text-left th-separator"
+                                    className: "px-1 py-1 text-xs font-semibold text-left text-gray-700 dark:text-gray-300 th-separator"
                                 }, React.createElement('div', { className: "flex flex-col leading-none" }, [
                                     React.createElement('span', { key: 'l1' }, "Linked"),
                                     React.createElement('span', { key: 'l2' }, "To")
                                 ])),
                                 React.createElement('th', {
                                     key: 'label',
-                                    className: "px-1 py-1 text-xs font-semibold text-left th-separator"
+                                    className: "px-1 py-1 text-xs font-semibold text-left text-gray-700 dark:text-gray-300 th-separator"
                                 }, React.createElement('div', { className: "flex flex-col leading-none" }, [
                                     React.createElement('span', { key: 'l1' }, "Link"),
                                     React.createElement('span', { key: 'l2' }, "Label")
@@ -2910,7 +2985,7 @@
                                     key: 'info',
                                     className: "px-1 py-2 text-center",
                                     title: "View/edit group or node info"
-                                }, React.createElement(Info, { size: 14, className: 'text-gray-400 mx-auto' }))
+                                }, React.createElement(Info, { size: 14, className: 'text-gray-400 dark:text-gray-500 mx-auto' }))
                             ])
                         ]),
                         React.createElement('tbody', { key: 'tbody' },
@@ -2938,12 +3013,12 @@
 
                                 return React.createElement('tr', {
                                     key: index,
-                                    className: `border-b border-gray-200 ${showError ? 'bg-red-100 hover:bg-red-200 border-l-4 border-l-red-500' : 'hover:bg-gray-50'}`,
+                                    className: `border-b border-gray-200 dark:border-gray-700 ${showError ? 'bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 border-l-4 border-l-red-500' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}`,
                                     title: errorTooltip
                                 }, [
                                     React.createElement('td', {
                                         key: 'rownum',
-                                        className: "px-1 py-1 text-xs text-center text-gray-400",
+                                        className: "px-1 py-1 text-xs text-center text-gray-400 dark:text-gray-500",
                                         style: { width: '30px' }
                                     }, filteredIndex + 1),
                                     React.createElement('td', {
@@ -2951,7 +3026,7 @@
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
                                         onClick: () => toggleGroupCollapse(node.Group_xA),
-                                        className: `p-1 rounded hover:bg-gray-100 ${isCollapsed ? 'text-gray-900 font-bold' : 'text-gray-600'}`,
+                                        className: `p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 ${isCollapsed ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-600 dark:text-gray-400'}`,
                                         title: collapsedGroups.has(node.Group_xA) ? `Expand group "${node.Group_xA}"` : `Collapse group "${node.Group_xA}"`
                                     }, React.createElement(collapsedGroups.has(node.Group_xA) ? ChevronRight : ChevronDown, { size: 14 }))),
                                     React.createElement('td', {
@@ -2959,7 +3034,7 @@
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
                                         onClick: () => toggleGroup(node.Group_xA),
-                                        className: `p-1 rounded hover:bg-gray-100 ${hiddenGroups.has(node.Group_xA) ? 'text-gray-400' : 'text-blue-600'}`,
+                                        className: `p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 ${hiddenGroups.has(node.Group_xA) ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`,
                                         title: hiddenGroups.has(node.Group_xA) ? `Show group "${node.Group_xA}"` : `Hide group "${node.Group_xA}"`
                                     }, React.createElement(hiddenGroups.has(node.Group_xA) ? EyeOff : Eye, { size: 14 }))),
                                     React.createElement('td', {
@@ -3004,11 +3079,11 @@
                                             }
                                         },
                                         title: isCollapsed ? `Editing this will rename all nodes in group "${node.Group_xA}"` : node.Group_xA,
-                                        className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50' : (isFirstOfCluster ? 'font-bold border-gray-300' : 'border-gray-300')}`
+                                        className: `px-1 py-0.5 text-xs border rounded table-input ${isCollapsed ? 'font-bold border-blue-400 bg-blue-50 dark:bg-blue-900/30' : (isFirstOfCluster ? 'font-bold border-gray-300 dark:border-gray-600' : 'border-gray-300 dark:border-gray-600')}`
                                     })),
                                     React.createElement('td', {
                                         key: 'node',
-                                        className: `px-1 py-1 ${linkingMode.active && !isCollapsed ? 'cursor-pointer hover:bg-blue-50 ring-2 ring-transparent hover:ring-blue-200' : ''}`,
+                                        className: `px-1 py-1 ${linkingMode.active && !isCollapsed ? 'cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 ring-2 ring-transparent hover:ring-blue-200 dark:hover:ring-blue-700' : ''}`,
                                         onClick: () => linkingMode.active && !isCollapsed && handleIDClick(index),
                                         title: linkingMode.active ? (isCollapsed ? 'Expand group to link' : 'Click to link') : (isCollapsed ? 'Collapsed group' : '')
                                     }, isCollapsed ? null : React.createElement('input', {
@@ -3050,18 +3125,18 @@
                                             }
                                         },
                                         title: node.Node_xA,
-                                        className: `px-1 py-0.5 text-xs border border-gray-300 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 text-blue-700 font-semibold' : ''}`,
+                                        className: `px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded table-input ${linkingMode.active ? 'pointer-events-none bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold' : ''}`,
                                         readOnly: linkingMode.active
                                     })),
                                     React.createElement('td', {
                                         key: 'links',
-                                        className: `px-2 py-1 text-center text-xs font-semibold ${!isCollapsed && (incomingLinksCount[node.ID_xA] || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`,
+                                        className: `px-2 py-1 text-center text-xs font-semibold ${!isCollapsed && (incomingLinksCount[node.ID_xA] || 0) > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500'}`,
                                         title: isCollapsed ? '' : `${incomingLinksCount[node.ID_xA] || 0} node(s) link to this`
                                     }, isCollapsed ? null : (incomingLinksCount[node.ID_xA] || 0)),
                                     ...(showIDColumn ? [
                                         React.createElement('td', {
                                             key: 'id',
-                                            className: `px-1 py-1 text-xs ${!isCollapsed && linkingMode.active ? 'cursor-pointer text-blue-600 hover:bg-blue-50 font-semibold' : 'text-gray-600'}`,
+                                            className: `px-1 py-1 text-xs ${!isCollapsed && linkingMode.active ? 'cursor-pointer text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 font-semibold' : 'text-gray-600 dark:text-gray-400'}`,
                                             onClick: () => !isCollapsed && handleIDClick(index),
                                             title: linkingMode.active && !isCollapsed ? 'Click to link' : ''
                                         }, isCollapsed ? null : node.ID_xA)
@@ -3081,14 +3156,14 @@
                                             title: linkingMode.active && linkingMode.targetRowIndex === index
                                                 ? 'Click an ID to link, or X to cancel'
                                                 : (node.Linked_Node_ID_xA ? 'Click to change link' : 'Click to select target node'),
-                                            className: `flex-1 min-w-[40px] px-1 py-0.5 text-xs border border-gray-300 rounded cursor-pointer ${linkingMode.active && linkingMode.targetRowIndex === index ? 'bg-blue-100 border-blue-400' : 'bg-gray-50 hover:bg-gray-100'}`
+                                            className: `flex-1 min-w-[40px] px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded cursor-pointer ${linkingMode.active && linkingMode.targetRowIndex === index ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-400' : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'}`
                                         }),
                                         // Clear button - shows when there's a value and not in linking mode
                                         ...(node.Linked_Node_ID_xA && !(linkingMode.active && linkingMode.targetRowIndex === index) ? [
                                             React.createElement('button', {
                                                 key: 'clear',
                                                 onClick: () => handleCellEdit(index, 'Linked_Node_ID_xA', ''),
-                                                className: "p-0.5 text-gray-400 hover:text-red-500",
+                                                className: "p-0.5 text-gray-400 dark:text-gray-500 hover:text-red-500",
                                                 title: "Clear link"
                                             }, React.createElement(X, { size: 14 }))
                                         ] : []),
@@ -3097,7 +3172,7 @@
                                             React.createElement('button', {
                                                 key: 'cancel',
                                                 onClick: exitLinkMode,
-                                                className: "p-0.5 text-gray-500 hover:text-red-500",
+                                                className: "p-0.5 text-gray-500 dark:text-gray-400 hover:text-red-500",
                                                 title: "Cancel linking"
                                             }, React.createElement(X, { size: 14 }))
                                         ] : [])
@@ -3117,14 +3192,14 @@
                                             }
                                         },
                                         title: node.Link_Label_xB || '',
-                                        className: "px-1 py-0.5 text-xs border border-gray-300 rounded table-input"
+                                        className: "px-1 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded table-input"
                                     })),
                                     React.createElement('td', {
                                         key: 'duplicate',
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
                                         onClick: () => isCollapsed ? handleDuplicateGroup(node.Group_xA) : handleDuplicateRow(index),
-                                        className: `p-1 rounded text-blue-500 hover:bg-blue-50`,
+                                        className: `p-1 rounded text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30`,
                                         title: isCollapsed ? "Duplicate entire group" : "Duplicate this row"
                                     }, React.createElement(Copy, { size: 14 }))),
                                     React.createElement('td', {
@@ -3132,7 +3207,7 @@
                                         className: "px-2 py-1 text-center"
                                     }, React.createElement('button', {
                                         onClick: () => isCollapsed ? handleDeleteGroup(node.Group_xA) : handleDeleteNode(index),
-                                        className: "p-1 rounded flex items-center gap-0.5 text-black hover:bg-red-50",
+                                        className: "p-1 rounded flex items-center gap-0.5 text-gray-700 dark:text-gray-300 hover:bg-red-50 dark:hover:bg-red-900/30",
                                         title: isCollapsed
                                             ? (groupsWithExternalRefs.has(node.Group_xA)
                                                 ? "Delete entire group (has external references)"
@@ -3219,7 +3294,7 @@
                 // Right panel - Canvas (Cytoscape handles pan/zoom natively)
                 React.createElement('div', {
                     key: 'canvas-panel',
-                    className: 'flex-1 bg-gray-50 overflow-auto custom-scrollbar relative',
+                    className: 'flex-1 bg-gray-50 dark:bg-gray-900 overflow-auto custom-scrollbar relative',
                     ref: canvasRef,
                     onWheel: handleWheel
                 }, [
@@ -3249,12 +3324,12 @@
                 onClick: () => setShowExportModal(false)
             }, React.createElement('div', {
                 key: 'modal-content',
-                className: "bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4",
+                className: "bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full mx-4",
                 onClick: (e) => e.stopPropagation()
             }, [
                 React.createElement('h3', {
                     key: 'title',
-                    className: "text-lg font-semibold mb-4 text-center"
+                    className: "text-lg font-semibold mb-4 text-center text-gray-900 dark:text-gray-100"
                 }, "Export"),
 
                 // Two column grid
@@ -3269,17 +3344,17 @@
                     }, [
                         React.createElement('div', {
                             key: 'table-header',
-                            className: "text-center pb-2 border-b border-gray-200"
+                            className: "text-center pb-2 border-b border-gray-200 dark:border-gray-700"
                         }, [
-                            React.createElement('div', { key: 't1', className: "font-bold text-gray-700" }, "Table"),
-                            React.createElement('div', { key: 't2', className: "text-xs text-gray-500" }, "(all rows)")
+                            React.createElement('div', { key: 't1', className: "font-bold text-gray-700 dark:text-gray-200" }, "Table"),
+                            React.createElement('div', { key: 't2', className: "text-xs text-gray-500 dark:text-gray-400" }, "(all rows)")
                         ]),
                         React.createElement('button', {
                             key: 'csv', onClick: handleExportCSV,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-blue-50 rounded border border-gray-200 hover:border-blue-200"
+                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
                         }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium" }, "CSV")
+                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600 dark:text-gray-300" }),
+                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "CSV")
                         ]),
                         React.createElement('button', {
                             key: 'txt', onClick: handleExportTXT,
@@ -3449,7 +3524,7 @@
                 React.createElement('button', {
                     key: 'close',
                     onClick: () => setShowExportModal(false),
-                    className: "w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    className: "w-full px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-500"
                 }, "Close")
             ])),
 
@@ -3460,12 +3535,12 @@
                 onClick: () => setDeleteConfirm(null)
             }, React.createElement('div', {
                 key: 'modal-content',
-                className: `bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4 ${deleteConfirm.isReferenced ? 'border-2 border-red-500' : ''}`,
+                className: `bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-sm w-full mx-4 ${deleteConfirm.isReferenced ? 'border-2 border-red-500' : ''}`,
                 onClick: (e) => e.stopPropagation()
             }, [
                 React.createElement('h3', {
                     key: 'title',
-                    className: `text-lg font-semibold mb-3 ${deleteConfirm.isReferenced ? 'text-red-600' : ''}`
+                    className: `text-lg font-semibold mb-3 ${deleteConfirm.isReferenced ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`
                 }, deleteConfirm.message),
                 React.createElement('div', {
                     key: 'buttons',
@@ -3474,7 +3549,7 @@
                     React.createElement('button', {
                         key: 'cancel',
                         onClick: () => setDeleteConfirm(null),
-                        className: "px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                        className: "px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-500"
                     }, "Cancel"),
                     React.createElement('button', {
                         key: 'confirm',
@@ -3491,12 +3566,12 @@
                 onClick: () => setShowHelpModal(false)
             }, React.createElement('div', {
                 key: 'modal-content',
-                className: "bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto",
+                className: "bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto",
                 onClick: (e) => e.stopPropagation()
             }, [
                 React.createElement('h3', {
                     key: 'title',
-                    className: "text-lg font-semibold mb-4 text-gray-800"
+                    className: "text-lg font-semibold mb-4 text-gray-800 dark:text-gray-100"
                 }, "Help"),
 
                 // Data Model

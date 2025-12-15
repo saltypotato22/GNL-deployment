@@ -19,7 +19,7 @@
             settings: 'Settings'
         },
         toolbar: {
-            title: 'Slim Graph',
+            title: 'Ai Diagram',
             subtitle: 'Network Diagram Visualizer'
         },
         table: {

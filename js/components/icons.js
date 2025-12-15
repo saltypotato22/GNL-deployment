@@ -506,6 +506,24 @@
         ]);
     };
 
+    // Link2 icon (chain icon for group chaining)
+    const Link2 = function(props) {
+        return createIcon([
+            React.createElement('path', {
+                key: 'path1',
+                d: 'M9 17H7A5 5 0 0 1 7 7h2'
+            }),
+            React.createElement('path', {
+                key: 'path2',
+                d: 'M15 7h2a5 5 0 1 1 0 10h-2'
+            }),
+            React.createElement('line', {
+                key: 'line',
+                x1: '8', y1: '12', x2: '16', y2: '12'
+            })
+        ], props);
+    };
+
     // Send icon (for chat input)
     const Send = function(props) {
         return createIcon([
@@ -516,6 +534,34 @@
             React.createElement('polygon', {
                 key: 'polygon',
                 points: '22 2 15 22 11 13 2 9 22 2'
+            })
+        ], props);
+    };
+
+    // Sun icon (for light mode indicator / switch to light)
+    const Sun = function(props) {
+        return createIcon([
+            React.createElement('circle', {
+                key: 'circle',
+                cx: '12', cy: '12', r: '5'
+            }),
+            React.createElement('line', { key: 'ray1', x1: '12', y1: '1', x2: '12', y2: '3' }),
+            React.createElement('line', { key: 'ray2', x1: '12', y1: '21', x2: '12', y2: '23' }),
+            React.createElement('line', { key: 'ray3', x1: '4.22', y1: '4.22', x2: '5.64', y2: '5.64' }),
+            React.createElement('line', { key: 'ray4', x1: '18.36', y1: '18.36', x2: '19.78', y2: '19.78' }),
+            React.createElement('line', { key: 'ray5', x1: '1', y1: '12', x2: '3', y2: '12' }),
+            React.createElement('line', { key: 'ray6', x1: '21', y1: '12', x2: '23', y2: '12' }),
+            React.createElement('line', { key: 'ray7', x1: '4.22', y1: '19.78', x2: '5.64', y2: '18.36' }),
+            React.createElement('line', { key: 'ray8', x1: '18.36', y1: '5.64', x2: '19.78', y2: '4.22' })
+        ], props);
+    };
+
+    // Moon icon (for dark mode indicator / switch to dark)
+    const Moon = function(props) {
+        return createIcon([
+            React.createElement('path', {
+                key: 'path',
+                d: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'
             })
         ], props);
     };
@@ -548,7 +594,10 @@
         RotateCw,
         Copy,
         Sparkles,
+        Link2,
         Send,
+        Sun,
+        Moon,
         LayoutCanvasPriority,
         LayoutBalanced,
         LayoutTablePriority

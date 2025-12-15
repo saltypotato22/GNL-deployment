@@ -3,7 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slim Graph - Network Diagram Visualizer</title>
+    <title>Ai Diagram</title>
+
+    <!-- Theme initialization - prevents flash of wrong theme on load -->
+    <script>
+        (function() {
+            try {
+                var theme = localStorage.getItem('theme');
+                var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (theme === 'dark' || (!theme && prefersDark)) {
+                    document.documentElement.classList.add('dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
 
     <!-- External Dependencies (pinned versions for security/stability)
          TODO: Add Subresource Integrity (SRI) hashes for enhanced security
@@ -14,7 +27,12 @@
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+    <!-- Tailwind CSS with dark mode support -->
     <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' };
+    </script>
 
     <!-- Cytoscape.js for graph rendering (replaces Mermaid for visualization) -->
     <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
@@ -50,7 +68,7 @@
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
     <!-- Root element for React app -->
-    <div id="root" role="application" aria-label="Slim Graph Network Diagram Visualizer"></div>
+    <div id="root" role="application" aria-label="Ai Diagram"></div>
 
     <!-- Screen reader announcements -->
     <div id="a11y-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>

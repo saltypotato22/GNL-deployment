@@ -31,9 +31,10 @@
      * @param {Boolean} hideUnlinkedNodes - Hide nodes with no links
      * @param {Boolean} hideLinkedNodes - Hide nodes that have links
      * @param {Boolean} hideLinks - Hide all link lines from canvas
+     * @param {Boolean} showGroupChain - Show chain connecting groups in table order
      * @returns {Array} Cytoscape elements array
      */
-    const nodesToElements = function(nodes, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks) {
+    const nodesToElements = function(nodes, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, showGroupChain) {
         const elements = [];
         const visibleNodeIDs = new Set();
         const hidden = hiddenGroups || new Set();
@@ -319,6 +320,35 @@
             });
         }
 
+        // === GROUP CHAIN EDGES ===
+        // Draw thin red lines connecting group LABELS in table order (when enabled)
+        if (showGroupChain && currentGroupOrder.length > 1) {
+            // Filter to only regular groups (not MUX mini-groups) that are visible
+            const visibleGroups = currentGroupOrder.filter(gid => {
+                // Skip MUX mini-groups (they start with 'muxgroup_')
+                if (gid.startsWith('muxgroup_')) return false;
+                // Check if group is hidden
+                const groupName = gid.replace('group_', '');
+                return !hidden.has(groupName);
+            });
+
+            // Create chain edges between consecutive group LABELS (not group boxes)
+            for (let i = 0; i < visibleGroups.length - 1; i++) {
+                // Convert group_X to label_X for connecting to group name labels
+                const sourceLabel = visibleGroups[i].replace('group_', 'label_');
+                const targetLabel = visibleGroups[i + 1].replace('group_', 'label_');
+                elements.push({
+                    group: 'edges',
+                    data: {
+                        id: `chain_${i}`,
+                        source: sourceLabel,
+                        target: targetLabel,
+                        isChain: true  // Marker for special styling
+                    }
+                });
+            }
+        }
+
         return elements;
     };
 
@@ -465,6 +495,26 @@
                 'source-arrow-shape': 'none',
                 'target-arrow-shape': 'none'
             }
+        },
+        // Group chain edges - thin red lines connecting group LABELS in table order
+        // Placed LAST to override base edge styles (higher CSS specificity)
+        // z-index low so chain renders UNDER nodes, labels, and link labels
+        {
+            selector: 'edge[?isChain]',
+            style: {
+                'width': 1,                        // Thin line
+                'line-color': '#ef4444',           // Tailwind red-500
+                'line-opacity': 1,
+                'curve-style': 'unbundled-bezier',
+                'control-point-distances': [40],   // Gentle curve arc
+                'control-point-weights': [0.5],    // Midpoint
+                'target-arrow-shape': 'triangle',  // Arrow pointing to next group
+                'target-arrow-color': '#ef4444',   // Red arrow
+                'arrow-scale': 0.8,                // Small arrow
+                'source-arrow-shape': 'none',
+                'label': '',                       // No label
+                'z-index': -1                      // Behind everything (nodes, labels, link labels)
+            }
         }
     ];
 
@@ -478,10 +528,11 @@
      * @param {Boolean} hideLinkedNodes - Hide linked nodes
      * @param {Boolean} hideLinks - Hide all link lines from canvas
      * @param {Boolean} hideLinkLabels - Hide link labels (but show links)
+     * @param {Boolean} showGroupChain - Show chain connecting groups in table order
      * @param {String} containerId - DOM container ID
      * @returns {Object} Cytoscape instance
      */
-    const renderCytoscape = function(nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, containerId) {
+    const renderCytoscape = function(nodes, settings, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, hideLinkLabels, showGroupChain, containerId) {
         const container = document.getElementById(containerId);
         if (!container) {
             throw new Error(`Container ${containerId} not found`);
@@ -490,7 +541,7 @@
         // Store hideLinks state for layout decisions
         currentHideLinks = hideLinks || false;
 
-        const elements = nodesToElements(nodes, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks);
+        const elements = nodesToElements(nodes, hiddenGroups, hideUnlinkedNodes, hideLinkedNodes, hideLinks, showGroupChain);
 
         // Map UI curve values to Cytoscape curve-style
         // Note: 'bezier' only curves when multiple edges exist between same nodes
@@ -1705,6 +1756,108 @@
         currentNodeSpacing = Math.max(0, Math.min(100, spacing || 0));
     };
 
+    /**
+     * Update Cytoscape graph colors for theme change
+     * Dynamically applies light or dark color palette to all graph elements
+     * Dark mode should be a proper inversion of light mode for consistency
+     * @param {String} theme - 'light' or 'dark'
+     */
+    const updateCytoscapeTheme = function(theme) {
+        if (!cy) return;
+
+        const isDark = theme === 'dark';
+
+        // Color palette - dark mode is a proper inversion of light mode
+        // Light: white bg, dark borders/text → Dark: dark bg, light borders/text
+        const colors = isDark ? {
+            // Nodes - dark fill with bright borders (invert of white fill + dark border)
+            nodeBg: '#1f2937',       // gray-800 (match canvas for flat look)
+            nodeBorder: '#e5e7eb',   // gray-200 (bright, like #333 inverted)
+            nodeText: '#f9fafb',     // gray-50 (white text)
+
+            // Groups - brighter dashed border (invert of #999)
+            groupBorder: '#9ca3af',  // gray-400 (visible on dark bg)
+            groupLabelText: '#f3f4f6', // gray-100 (bright label)
+
+            // Edges - light lines (invert of #333)
+            edgeLine: '#d1d5db',     // gray-300 (bright lines)
+            edgeLabelBg: '#1f2937',  // gray-800 (match canvas)
+            edgeText: '#f9fafb',     // gray-50 (white text)
+
+            // MUX nodes - slightly elevated from canvas
+            muxBg: '#374151',        // gray-700 (slightly lighter than canvas)
+            muxBorder: '#d1d5db',    // gray-300 (bright dashed)
+            muxGroupBorder: '#9ca3af', // gray-400
+
+            // Chain - brighter red for dark mode
+            chainLine: '#f87171'     // red-400 (brighter)
+        } : {
+            // Light mode - original colors
+            nodeBg: '#ffffff',
+            nodeBorder: '#333333',
+            nodeText: '#333333',
+            groupBorder: '#999999',
+            groupLabelText: '#333333',
+            edgeLine: '#333333',
+            edgeLabelBg: '#ffffff',
+            edgeText: '#333333',
+            muxBg: '#f5f5f5',
+            muxBorder: '#666666',
+            muxGroupBorder: '#888888',
+            chainLine: '#ef4444'     // red-500
+        };
+
+        cy.style()
+            // Regular nodes (not groups, not labels)
+            .selector('node[!isGroup][!isGroupLabel]')
+            .style({
+                'background-color': colors.nodeBg,
+                'border-color': colors.nodeBorder,
+                'color': colors.nodeText
+            })
+            // Group label nodes - bold text for group titles
+            .selector('node[?isGroupLabel]')
+            .style({
+                'color': colors.groupLabelText
+            })
+            // Group (compound) nodes - dashed container
+            .selector('node[?isGroup]')
+            .style({
+                'border-color': colors.groupBorder
+            })
+            // MUX clone nodes
+            .selector('node[?isMuxClone]')
+            .style({
+                'background-color': colors.muxBg,
+                'border-color': colors.muxBorder
+            })
+            // MUX mini-groups
+            .selector('node[?isMuxGroup]')
+            .style({
+                'border-color': colors.muxGroupBorder
+            })
+            // All edges - lines and labels
+            .selector('edge')
+            .style({
+                'line-color': colors.edgeLine,
+                'text-background-color': colors.edgeLabelBg,
+                'color': colors.edgeText
+            })
+            // Edges with arrows - match line color
+            .selector('edge[arrow = "To"], edge[arrow = "From"], edge[arrow = "Both"]')
+            .style({
+                'target-arrow-color': colors.edgeLine,
+                'source-arrow-color': colors.edgeLine
+            })
+            // Group chain edges (red connecting line)
+            .selector('edge[?isChain]')
+            .style({
+                'line-color': colors.chainLine,
+                'target-arrow-color': colors.chainLine
+            })
+            .update();
+    };
+
     // Expose to global namespace
     window.GraphApp.core.renderCytoscape = renderCytoscape;
     window.GraphApp.core.clearCytoscapePositions = clearPositions;
@@ -1722,5 +1875,6 @@
     window.GraphApp.core.hasCytoscapeGraph = hasGraph;
     window.GraphApp.core.getVisibleNodeIDs = getVisibleNodeIDs;
     window.GraphApp.core.setNodeSpacing = setNodeSpacing;
+    window.GraphApp.core.updateCytoscapeTheme = updateCytoscapeTheme;
 
 })(window);
