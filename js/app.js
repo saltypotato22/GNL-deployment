@@ -50,6 +50,17 @@
         const [showReadmeModal, setShowReadmeModal] = useState(false);
         const [showHelpModal, setShowHelpModal] = useState(false);
         const [showDemoMenu, setShowDemoMenu] = useState(false);
+        const [showImportModal, setShowImportModal] = useState(false);
+        const [pendingImport, setPendingImport] = useState(null); // { nodes: [], fileName: '' }
+
+        // Export filename confirmation modal
+        const [exportNameModal, setExportNameModal] = useState({
+            isOpen: false,
+            defaultName: '',      // Base name without extension
+            extension: '',        // '.csv', '.xlsx', etc.
+            exportFn: null,       // Function to call with final filename
+            isCanvas: false       // true = canvas export, false = table export
+        });
 
         // Theme state (light/dark mode)
         const [theme, setTheme] = useState(() => {
@@ -508,6 +519,10 @@
             const defaultDemo = demos['Quick Tour'] || Object.values(demos)[0] || [];
             setNodes(defaultDemo);
 
+            // Collapse all groups by default
+            const demoGroups = new Set(defaultDemo.map(n => n.Group_xA).filter(g => g));
+            setCollapsedGroups(demoGroups);
+
             // Validate on initial load
             const validationErrors = window.GraphApp.utils.validateNodes(defaultDemo);
             setErrors(validationErrors);
@@ -886,6 +901,7 @@
                     setAiError('');
                     setInfoPopup({ open: false, type: null, groupName: null, nodeIndex: null });
                     setContextMenu({ open: false, type: null, groupName: null, nodeId: null, edgeData: null, position: { x: 0, y: 0 } });
+                    setExportNameModal({ isOpen: false, defaultName: '', extension: '', exportFn: null, isCanvas: false });
                 }
             };
 
@@ -1114,18 +1130,31 @@
                     return;
                 }
 
-                // Clear Cytoscape positions for fresh layout on new file
-                window.GraphApp.core.clearCytoscapePositions();
-                isFirstRenderRef.current = true;
+                // Check if existing data - show modal to ask Replace vs Add
+                if (nodes.length > 0) {
+                    setPendingImport({ nodes: importedNodes, fileName: file.name });
+                    setShowImportModal(true);
+                } else {
+                    // No existing data - proceed directly with import
+                    window.GraphApp.core.clearCytoscapePositions();
+                    isFirstRenderRef.current = true;
 
-                setNodes(importedNodes);
-                setErrors([]);
-                setCurrentFileName(file.name);
+                    setNodes(importedNodes);
+                    setErrors([]);
+                    setCurrentFileName(file.name);
 
-                // Validate imported data
-                const validationErrors = window.GraphApp.utils.validateNodes(importedNodes);
-                if (validationErrors.length > 0) {
-                    setErrors(validationErrors);
+                    // Collapse all groups by default
+                    const importedGroups = new Set(importedNodes.map(n => n.Group_xA).filter(g => g));
+                    setCollapsedGroups(importedGroups);
+
+                    // Validate imported data
+                    const validationErrors = window.GraphApp.utils.validateNodes(importedNodes);
+                    if (validationErrors.length > 0) {
+                        setErrors(validationErrors);
+                    }
+
+                    // Save to history
+                    saveToHistory(importedNodes);
                 }
 
                 // Reset file input
@@ -1136,6 +1165,77 @@
                 alert('Error importing file: ' + error.message);
                 console.error(error);
             }
+        }, [nodes.length, saveToHistory]);
+
+        // Handle import modal: Replace All
+        const handleImportReplace = useCallback(() => {
+            if (!pendingImport) return;
+
+            window.GraphApp.core.clearCytoscapePositions();
+            isFirstRenderRef.current = true;
+
+            setNodes(pendingImport.nodes);
+            setErrors([]);
+            setCurrentFileName(pendingImport.fileName);
+
+            // Collapse all imported groups by default
+            const importedGroups = new Set(pendingImport.nodes.map(n => n.Group_xA).filter(g => g));
+            setCollapsedGroups(importedGroups);
+
+            // Validate imported data
+            const validationErrors = window.GraphApp.utils.validateNodes(pendingImport.nodes);
+            if (validationErrors.length > 0) {
+                setErrors(validationErrors);
+            }
+
+            // Save to history
+            saveToHistory(pendingImport.nodes);
+
+            setPendingImport(null);
+            setShowImportModal(false);
+        }, [pendingImport, saveToHistory]);
+
+        // Handle import modal: Add to Existing
+        const handleImportAdd = useCallback(() => {
+            if (!pendingImport) return;
+
+            // Merge nodes using utils function
+            const { mergedNodes, renamedGroups, newGroups } =
+                window.GraphApp.utils.mergeNodes(nodes, pendingImport.nodes);
+
+            // DO NOT clear Cytoscape positions - preserve existing node positions
+            // isFirstRenderRef stays false - not a fresh render
+
+            setNodes(mergedNodes);
+            setCurrentFileName(`${currentFileName} + ${pendingImport.fileName}`);
+
+            // Collapse newly added groups (keep existing collapse state + add new groups)
+            setCollapsedGroups(prev => new Set([...prev, ...newGroups]));
+
+            // Build validation errors + info messages about renames
+            const validationErrors = window.GraphApp.utils.validateNodes(mergedNodes);
+
+            // Add info messages about renamed groups
+            const renameMessages = [];
+            if (renamedGroups.size > 0) {
+                renamedGroups.forEach((newName, oldName) => {
+                    renameMessages.push(`Info: Group "${oldName}" renamed to "${newName}"`);
+                });
+            }
+
+            setErrors([...renameMessages, ...validationErrors]);
+
+            // Save to history
+            saveToHistory(mergedNodes);
+
+            setPendingImport(null);
+            setShowImportModal(false);
+        }, [nodes, pendingImport, currentFileName, saveToHistory]);
+
+        // Handle import modal: Cancel
+        const handleImportCancel = useCallback(() => {
+            setPendingImport(null);
+            setShowImportModal(false);
         }, []);
 
         // Add new node
@@ -2137,123 +2237,259 @@
             setNodes(sorted);
         }, [nodes, sortColumn, sortDirection]);
 
+        // Helper to get smart default export name
+        const getExportDefaultName = useCallback((fallback, isCanvas = false) => {
+            // Extract base name from currentFileName (remove extension)
+            const baseName = currentFileName ? currentFileName.replace(/\.[^/.]+$/, '') : '';
+            if (baseName) {
+                // Use imported name + suffix
+                return isCanvas ? `${baseName}_canvas` : `${baseName}_table`;
+            }
+            // Fallback with suffix for demo/default data
+            return isCanvas ? `${fallback}_canvas` : `${fallback}_table`;
+        }, [currentFileName]);
+
         // Export handlers
         const handleExportCSV = useCallback(() => {
-            window.GraphApp.exports.exportCSV(nodes, 'graph-data.csv');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-data'),
+                extension: '.csv',
+                exportFn: (filename) => window.GraphApp.exports.exportCSV(nodes, filename),
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
-        const handleExportExcel = useCallback(async () => {
-            try {
-                await window.GraphApp.core.exportExcel(nodes, 'graph-data.xlsx');
-                setShowExportModal(false);
-            } catch (error) {
-                alert('Error exporting Excel: ' + error.message);
-            }
-        }, [nodes]);
+        const handleExportExcel = useCallback(() => {
+            setShowExportModal(false);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-data'),
+                extension: '.xlsx',
+                exportFn: async (filename) => {
+                    try {
+                        await window.GraphApp.core.exportExcel(nodes, filename);
+                    } catch (error) {
+                        alert('Error exporting Excel: ' + error.message);
+                    }
+                },
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportMermaid = useCallback(() => {
-            const mermaidSyntax = window.GraphApp.core.generateMermaid(nodes, settings, hiddenGroups);
-            window.GraphApp.exports.exportMermaid(mermaidSyntax, 'graph.mmd');
             setShowExportModal(false);
-        }, [nodes, settings, hiddenGroups]);
+            const mermaidSyntax = window.GraphApp.core.generateMermaid(nodes, settings, hiddenGroups);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.mmd',
+                exportFn: (filename) => window.GraphApp.exports.exportMermaid(mermaidSyntax, filename),
+                isCanvas: false
+            });
+        }, [nodes, settings, hiddenGroups, getExportDefaultName]);
 
-        const handleExportPNG = useCallback(async () => {
-            try {
-                await window.GraphApp.exports.exportPNG('mermaid-container', 'graph.png');
-                setShowExportModal(false);
-            } catch (error) {
-                alert('Error exporting PNG: ' + error.message);
-            }
-        }, []);
+        const handleExportPNG = useCallback(() => {
+            setShowExportModal(false);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.png',
+                exportFn: async (filename) => {
+                    try {
+                        await window.GraphApp.exports.exportPNG('mermaid-container', filename);
+                    } catch (error) {
+                        alert('Error exporting PNG: ' + error.message);
+                    }
+                },
+                isCanvas: true
+            });
+        }, [getExportDefaultName]);
 
         const handleExportSVG = useCallback(() => {
-            try {
-                window.GraphApp.exports.exportSVG('mermaid-container', 'graph.svg');
-                setShowExportModal(false);
-            } catch (error) {
-                alert('Error exporting SVG: ' + error.message);
-            }
-        }, []);
+            setShowExportModal(false);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.svg',
+                exportFn: (filename) => {
+                    try {
+                        window.GraphApp.exports.exportSVG('mermaid-container', filename);
+                    } catch (error) {
+                        alert('Error exporting SVG: ' + error.message);
+                    }
+                },
+                isCanvas: true
+            });
+        }, [getExportDefaultName]);
 
         const handleExportJSON = useCallback(() => {
-            window.GraphApp.exports.exportJSON(nodes, 'graph-data.json');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-data'),
+                extension: '.json',
+                exportFn: (filename) => window.GraphApp.exports.exportJSON(nodes, filename),
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportGraphML = useCallback(() => {
-            window.GraphApp.exports.exportGraphML(nodes, 'graph.graphml');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.graphml',
+                exportFn: (filename) => window.GraphApp.exports.exportGraphML(nodes, filename),
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportDOT = useCallback(() => {
-            window.GraphApp.exports.exportDOT(nodes, 'graph.dot', settings);
             setShowExportModal(false);
-        }, [nodes, settings]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.dot',
+                exportFn: (filename) => window.GraphApp.exports.exportDOT(nodes, filename, settings),
+                isCanvas: false
+            });
+        }, [nodes, settings, getExportDefaultName]);
 
-        const handleExportPDF = useCallback(async () => {
-            try {
-                await window.GraphApp.exports.exportPDF('mermaid-container', 'graph.pdf');
-                setShowExportModal(false);
-            } catch (error) {
-                alert('Error exporting PDF: ' + error.message);
-            }
-        }, []);
+        const handleExportPDF = useCallback(() => {
+            setShowExportModal(false);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph'),
+                extension: '.pdf',
+                exportFn: async (filename) => {
+                    try {
+                        await window.GraphApp.exports.exportPDF('mermaid-container', filename);
+                    } catch (error) {
+                        alert('Error exporting PDF: ' + error.message);
+                    }
+                },
+                isCanvas: true
+            });
+        }, [getExportDefaultName]);
 
         const handleExportExcalidraw = useCallback(() => {
-            window.GraphApp.exports.exportExcalidraw(nodes, 'graph.excalidraw');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('diagram'),
+                extension: '.excalidraw',
+                exportFn: (filename) => window.GraphApp.exports.exportExcalidraw(nodes, filename),
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
         // Canvas export handlers (visible nodes only)
         const handleExportCSVCanvas = useCallback(() => {
-            window.GraphApp.exports.exportCSVCanvas(nodes, 'graph-canvas.csv');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.csv',
+                exportFn: (filename) => window.GraphApp.exports.exportCSVCanvas(nodes, filename),
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
-        const handleExportExcelCanvas = useCallback(async () => {
-            const filteredNodes = window.GraphApp.exports.filterVisibleNodes(nodes);
-            await window.GraphApp.core.exportExcel(filteredNodes, 'graph-canvas.xlsx');
+        const handleExportExcelCanvas = useCallback(() => {
             setShowExportModal(false);
-        }, [nodes]);
+            const filteredNodes = window.GraphApp.exports.filterVisibleNodes(nodes);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.xlsx',
+                exportFn: async (filename) => {
+                    await window.GraphApp.core.exportExcel(filteredNodes, filename);
+                },
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportJSONCanvas = useCallback(() => {
-            window.GraphApp.exports.exportJSONCanvas(nodes, 'graph-canvas.json');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.json',
+                exportFn: (filename) => window.GraphApp.exports.exportJSONCanvas(nodes, filename),
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportGraphMLCanvas = useCallback(() => {
-            window.GraphApp.exports.exportGraphMLCanvas(nodes, 'graph-canvas.graphml');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.graphml',
+                exportFn: (filename) => window.GraphApp.exports.exportGraphMLCanvas(nodes, filename),
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportMermaidCanvas = useCallback(() => {
+            setShowExportModal(false);
             const filteredNodes = window.GraphApp.exports.filterVisibleNodes(nodes);
             const mermaidSyntax = window.GraphApp.core.generateMermaid(filteredNodes, settings, new Set());
-            window.GraphApp.exports.exportMermaid(mermaidSyntax, 'graph-canvas.mmd');
-            setShowExportModal(false);
-        }, [nodes, settings]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.mmd',
+                exportFn: (filename) => window.GraphApp.exports.exportMermaid(mermaidSyntax, filename),
+                isCanvas: true
+            });
+        }, [nodes, settings, getExportDefaultName]);
 
         const handleExportDOTCanvas = useCallback(() => {
-            window.GraphApp.exports.exportDOTCanvas(nodes, 'graph-canvas.dot', settings);
             setShowExportModal(false);
-        }, [nodes, settings]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.dot',
+                exportFn: (filename) => window.GraphApp.exports.exportDOTCanvas(nodes, filename, settings),
+                isCanvas: true
+            });
+        }, [nodes, settings, getExportDefaultName]);
 
         const handleExportExcalidrawCanvas = useCallback(() => {
-            window.GraphApp.exports.exportExcalidrawCanvas(nodes, 'graph-canvas.excalidraw');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('diagram-canvas', true),
+                extension: '.excalidraw',
+                exportFn: (filename) => window.GraphApp.exports.exportExcalidrawCanvas(nodes, filename),
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
         // TXT export handlers
         const handleExportTXT = useCallback(() => {
-            window.GraphApp.exports.exportTXT(nodes, 'graph-data.txt');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-data'),
+                extension: '.txt',
+                exportFn: (filename) => window.GraphApp.exports.exportTXT(nodes, filename),
+                isCanvas: false
+            });
+        }, [nodes, getExportDefaultName]);
 
         const handleExportTXTCanvas = useCallback(() => {
-            window.GraphApp.exports.exportTXTCanvas(nodes, 'graph-canvas.txt');
             setShowExportModal(false);
-        }, [nodes]);
+            setExportNameModal({
+                isOpen: true,
+                defaultName: getExportDefaultName('graph-canvas', true),
+                extension: '.txt',
+                exportFn: (filename) => window.GraphApp.exports.exportTXTCanvas(nodes, filename),
+                isCanvas: true
+            });
+        }, [nodes, getExportDefaultName]);
 
         // Clipboard handlers
         const handleCopyToClipboard = useCallback(async () => {
@@ -2290,6 +2526,10 @@
             setNodes([...demoData]);
             setShowDemoMenu(false);
             setCurrentFileName(demoName);  // Show demo name in toolbar
+
+            // Collapse all demo groups by default
+            const demoGroups = new Set(demoData.map(n => n.Group_xA).filter(g => g));
+            setCollapsedGroups(demoGroups);
 
             // Validate demo data
             const validationErrors = window.GraphApp.utils.validateNodes(demoData);
@@ -2789,27 +3029,32 @@
                 ])
             ] : []),
 
-            // Error banner
-            ...(errors.length > 0 ? [
-                React.createElement('div', {
-                    key: 'errors',
-                    className: "bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 px-4 py-2"
-                }, [
+            // Error banner (only shows actual errors, filters out Info messages)
+            ...((() => {
+                const actualErrors = errors.filter(e => !e.startsWith('Info:'));
+                // Only display banner if there are actual errors (Info messages hidden for now)
+                if (actualErrors.length === 0) return [];
+                return [
                     React.createElement('div', {
-                        key: 'error-title',
-                        className: "flex items-center gap-2 text-sm text-red-800 dark:text-red-200 font-semibold mb-1"
+                        key: 'errors',
+                        className: "bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 px-4 py-2"
                     }, [
-                        React.createElement(AlertCircle, { key: 'icon', size: 16 }),
-                        React.createElement('span', { key: 'text' }, `${errors.length} Error(s) Found`)
-                    ]),
-                    React.createElement('ul', {
-                        key: 'error-list',
-                        className: "text-xs text-red-700 list-disc list-inside"
-                    }, errors.map((error, i) =>
-                        React.createElement('li', { key: i }, error)
-                    ))
-                ])
-            ] : []),
+                        React.createElement('div', {
+                            key: 'error-title',
+                            className: "flex items-center gap-2 text-sm text-red-800 dark:text-red-200 font-semibold mb-1"
+                        }, [
+                            React.createElement(AlertCircle, { key: 'icon', size: 16 }),
+                            React.createElement('span', { key: 'text' }, `${actualErrors.length} Error(s) Found`)
+                        ]),
+                        React.createElement('ul', {
+                            key: 'error-list',
+                            className: "text-xs text-red-700 dark:text-red-300 list-disc list-inside"
+                        }, actualErrors.map((error, i) =>
+                            React.createElement('li', { key: i }, error)
+                        ))
+                    ])
+                ];
+            })()),
 
             // Main content area
             React.createElement('div', {
@@ -3332,186 +3577,164 @@
                     className: "text-lg font-semibold mb-4 text-center text-gray-900 dark:text-gray-100"
                 }, "Export"),
 
-                // Two column grid
+                // Export format rows - each row: Format name | Full Table button | Canvas button
                 React.createElement('div', {
-                    key: 'columns',
-                    className: "grid grid-cols-2 gap-4 mb-4"
+                    key: 'export-rows',
+                    className: "space-y-1.5 mb-4"
                 }, [
-                    // TABLE column
-                    React.createElement('div', {
-                        key: 'table-col',
-                        className: "space-y-2"
-                    }, [
-                        React.createElement('div', {
-                            key: 'table-header',
-                            className: "text-center pb-2 border-b border-gray-200 dark:border-gray-700"
-                        }, [
-                            React.createElement('div', { key: 't1', className: "font-bold text-gray-700 dark:text-gray-200" }, "Table"),
-                            React.createElement('div', { key: 't2', className: "text-xs text-gray-500 dark:text-gray-400" }, "(all rows)")
-                        ]),
+                    // Clipboard row (first, prominent)
+                    React.createElement('div', { key: 'clipboard', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "Clipboard"),
                         React.createElement('button', {
-                            key: 'csv', onClick: handleExportCSV,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600 dark:text-gray-300" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "CSV")
-                        ]),
+                            key: 'table', onClick: handleCopyToClipboard,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'txt', onClick: handleExportTXT,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500 dark:text-gray-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "TXT")
-                        ]),
-                        React.createElement('button', {
-                            key: 'clipboard', onClick: handleCopyToClipboard,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-green-50 dark:hover:bg-green-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-green-300 dark:hover:border-green-700"
-                        }, [
-                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Clipboard")
-                        ]),
-                        React.createElement('button', {
-                            key: 'excel', onClick: handleExportExcel,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excel")
-                        ]),
-                        React.createElement('button', {
-                            key: 'json', onClick: handleExportJSON,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600 dark:text-yellow-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "JSON")
-                        ]),
-                        React.createElement('button', {
-                            key: 'mermaid', onClick: handleExportMermaid,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600 dark:text-pink-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Mermaid")
-                        ]),
-                        React.createElement('button', {
-                            key: 'graphml', onClick: handleExportGraphML,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600 dark:text-orange-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "GraphML")
-                        ]),
-                        React.createElement('button', {
-                            key: 'dot', onClick: handleExportDOT,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "DOT")
-                        ]),
-                        React.createElement('button', {
-                            key: 'excalidraw', onClick: handleExportExcalidraw,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-200 dark:hover:border-blue-700"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600 dark:text-indigo-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excalidraw")
-                        ])
+                            key: 'canvas', onClick: handleCopyToClipboardCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
                     ]),
 
-                    // CANVAS column
-                    React.createElement('div', {
-                        key: 'canvas-col',
-                        className: "space-y-2"
-                    }, [
-                        React.createElement('div', {
-                            key: 'canvas-header',
-                            className: "text-center pb-2 border-b border-blue-200 dark:border-blue-700"
-                        }, [
-                            React.createElement('div', { key: 'c1', className: "font-bold text-blue-700 dark:text-blue-400" }, "Canvas"),
-                            React.createElement('div', { key: 'c2', className: "text-xs text-blue-500 dark:text-blue-300" }, "(visible only)")
-                        ]),
+                    // Separator
+                    React.createElement('div', { key: 'sep0', className: "border-t border-gray-200 dark:border-gray-700 pt-1.5 mt-1.5" }),
+
+                    // CSV row
+                    React.createElement('div', { key: 'csv', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "CSV"),
                         React.createElement('button', {
-                            key: 'csv', onClick: handleExportCSVCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-600 dark:text-gray-300" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "CSV")
-                        ]),
+                            key: 'table', onClick: handleExportCSV,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'txt', onClick: handleExportTXTCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-gray-500 dark:text-gray-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "TXT")
-                        ]),
+                            key: 'canvas', onClick: handleExportCSVCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // Excel row
+                    React.createElement('div', { key: 'excel', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "Excel"),
                         React.createElement('button', {
-                            key: 'clipboard', onClick: handleCopyToClipboardCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-green-100 dark:hover:bg-green-900/30 rounded border border-blue-200 dark:border-blue-700 hover:border-green-300 dark:hover:border-green-700"
-                        }, [
-                            React.createElement(Copy, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Clipboard")
-                        ]),
+                            key: 'table', onClick: handleExportExcel,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'excel', onClick: handleExportExcelCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(File, { key: 'i', size: 14, className: "text-green-600 dark:text-green-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excel")
-                        ]),
+                            key: 'canvas', onClick: handleExportExcelCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // JSON row
+                    React.createElement('div', { key: 'json', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "JSON"),
                         React.createElement('button', {
-                            key: 'json', onClick: handleExportJSONCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-yellow-600 dark:text-yellow-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "JSON")
-                        ]),
+                            key: 'table', onClick: handleExportJSON,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'mermaid', onClick: handleExportMermaidCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-pink-600 dark:text-pink-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Mermaid")
-                        ]),
+                            key: 'canvas', onClick: handleExportJSONCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // TXT row
+                    React.createElement('div', { key: 'txt', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "TXT"),
                         React.createElement('button', {
-                            key: 'graphml', onClick: handleExportGraphMLCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-orange-600 dark:text-orange-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "GraphML")
-                        ]),
+                            key: 'table', onClick: handleExportTXT,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'dot', onClick: handleExportDOTCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "DOT")
-                        ]),
+                            key: 'canvas', onClick: handleExportTXTCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+
+                    // Separator - Graph formats
+                    React.createElement('div', { key: 'sep1', className: "border-t border-gray-200 dark:border-gray-700 pt-1.5 mt-1.5" }),
+
+                    // Mermaid row
+                    React.createElement('div', { key: 'mermaid', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "Mermaid"),
                         React.createElement('button', {
-                            key: 'excalidraw', onClick: handleExportExcalidrawCanvas,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-indigo-600 dark:text-indigo-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "Excalidraw")
-                        ]),
-                        // Separator for image formats
-                        React.createElement('div', { key: 'sep', className: "border-t border-blue-200 dark:border-blue-700 pt-2 mt-2" }),
+                            key: 'table', onClick: handleExportMermaid,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'png', onClick: handleExportPNG,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(Image, { key: 'i', size: 14, className: "text-blue-600 dark:text-blue-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "PNG")
-                        ]),
+                            key: 'canvas', onClick: handleExportMermaidCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // GraphML row
+                    React.createElement('div', { key: 'graphml', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "GraphML"),
                         React.createElement('button', {
-                            key: 'svg', onClick: handleExportSVG,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(Image, { key: 'i', size: 14, className: "text-purple-600 dark:text-purple-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "SVG")
-                        ]),
+                            key: 'table', onClick: handleExportGraphML,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
                         React.createElement('button', {
-                            key: 'pdf', onClick: handleExportPDF,
-                            className: "w-full flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded border border-blue-200 dark:border-blue-700 hover:border-blue-300 dark:hover:border-blue-600"
-                        }, [
-                            React.createElement(FileText, { key: 'i', size: 14, className: "text-red-600 dark:text-red-400" }),
-                            React.createElement('span', { key: 'n', className: "text-xs font-medium text-gray-700 dark:text-gray-200" }, "PDF")
-                        ])
+                            key: 'canvas', onClick: handleExportGraphMLCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // DOT row
+                    React.createElement('div', { key: 'dot', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "DOT"),
+                        React.createElement('button', {
+                            key: 'table', onClick: handleExportDOT,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
+                        React.createElement('button', {
+                            key: 'canvas', onClick: handleExportDOTCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+                    // Excalidraw row
+                    React.createElement('div', { key: 'excalidraw', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "Excalidraw"),
+                        React.createElement('button', {
+                            key: 'table', onClick: handleExportExcalidraw,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Full Table"),
+                        React.createElement('div', { key: 'spacer', className: "w-24" }),
+                        React.createElement('button', {
+                            key: 'canvas', onClick: handleExportExcalidrawCanvas,
+                            className: "w-14 px-1 py-1 text-xs text-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Canvas")
+                    ]),
+
+                    // Separator - Image formats (Canvas only)
+                    React.createElement('div', { key: 'sep2', className: "border-t border-gray-200 dark:border-gray-700 pt-1.5 mt-1.5" }),
+                    React.createElement('div', { key: 'img-label', className: "text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1" }, "Images (Canvas only)"),
+
+                    // PNG row
+                    React.createElement('div', { key: 'png', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "PNG"),
+                        React.createElement('button', {
+                            key: 'canvas', onClick: handleExportPNG,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Export")
+                    ]),
+                    // SVG row
+                    React.createElement('div', { key: 'svg', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "SVG"),
+                        React.createElement('button', {
+                            key: 'canvas', onClick: handleExportSVG,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Export")
+                    ]),
+                    // PDF row
+                    React.createElement('div', { key: 'pdf', className: "flex items-center" }, [
+                        React.createElement('span', { key: 'label', className: "w-24 text-base font-medium text-gray-700 dark:text-gray-300" }, "PDF"),
+                        React.createElement('button', {
+                            key: 'canvas', onClick: handleExportPDF,
+                            className: "w-24 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded border border-gray-300 dark:border-gray-600"
+                        }, "Export")
                     ])
                 ]),
 
@@ -3690,6 +3913,136 @@
                     onClick: () => setShowReadmeModal(false),
                     className: "mt-4 w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
                 }, "Close")
+            ])),
+
+            // Import mode modal (Replace All vs Add to Existing)
+            showImportModal && pendingImport && React.createElement('div', {
+                key: 'import-modal',
+                className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
+                onClick: handleImportCancel
+            }, React.createElement('div', {
+                key: 'modal-content',
+                className: "bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4",
+                onClick: (e) => e.stopPropagation()
+            }, [
+                React.createElement('h3', {
+                    key: 'title',
+                    className: "text-lg font-semibold mb-2 text-gray-800 dark:text-gray-100"
+                }, `Import: ${pendingImport.fileName}`),
+
+                React.createElement('p', {
+                    key: 'message',
+                    className: "text-sm text-gray-600 dark:text-gray-300 mb-4"
+                }, `You have existing data (${nodes.length} nodes). How would you like to import?`),
+
+                React.createElement('p', {
+                    key: 'hint',
+                    className: "text-xs text-gray-500 dark:text-gray-400 mb-4"
+                }, "Conflicting group names will be renamed with _N suffix (e.g., Sensor → Sensor_1)"),
+
+                React.createElement('div', {
+                    key: 'buttons',
+                    className: "flex justify-end gap-2"
+                }, [
+                    React.createElement('button', {
+                        key: 'cancel',
+                        onClick: handleImportCancel,
+                        className: "px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                    }, "Cancel"),
+                    React.createElement('button', {
+                        key: 'replace',
+                        onClick: handleImportReplace,
+                        className: "px-4 py-2 text-sm bg-red-500 text-white hover:bg-red-600 rounded"
+                    }, "Replace All"),
+                    React.createElement('button', {
+                        key: 'add',
+                        onClick: handleImportAdd,
+                        className: "px-4 py-2 text-sm bg-blue-500 text-white hover:bg-blue-600 rounded"
+                    }, "Add to Existing")
+                ])
+            ])),
+
+            // Export filename confirmation modal
+            exportNameModal.isOpen && React.createElement('div', {
+                key: 'export-name-modal',
+                className: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center modal-overlay",
+                onClick: () => setExportNameModal({ isOpen: false, defaultName: '', extension: '', exportFn: null, isCanvas: false })
+            }, React.createElement('div', {
+                key: 'modal-content',
+                className: "bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full mx-4",
+                onClick: (e) => e.stopPropagation()
+            }, [
+                React.createElement('h3', {
+                    key: 'title',
+                    className: "text-lg font-semibold mb-4 text-gray-800 dark:text-gray-100"
+                }, exportNameModal.isCanvas ? "Export_Canvas" : "Export_Table"),
+
+                // Filename input with extension suffix
+                React.createElement('div', {
+                    key: 'input-wrapper',
+                    className: "mb-4"
+                }, [
+                    React.createElement('label', {
+                        key: 'label',
+                        className: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                    }, "Filename"),
+                    React.createElement('div', {
+                        key: 'input-group',
+                        className: "flex items-center w-full border border-gray-300 dark:border-gray-600 rounded px-2"
+                    }, [
+                        React.createElement('input', {
+                            key: 'input',
+                            type: 'text',
+                            value: exportNameModal.defaultName,
+                            onChange: (e) => setExportNameModal({
+                                ...exportNameModal,
+                                defaultName: e.target.value
+                            }),
+                            onKeyDown: (e) => {
+                                if (e.key === 'Enter' && exportNameModal.defaultName.trim()) {
+                                    e.preventDefault();
+                                    exportNameModal.exportFn(exportNameModal.defaultName.trim() + exportNameModal.extension);
+                                    setExportNameModal({ isOpen: false, defaultName: '', extension: '', exportFn: null, isCanvas: false });
+                                }
+                            },
+                            autoFocus: true,
+                            spellCheck: false,
+                            autoComplete: 'off',
+                            className: "flex-1 min-w-0 py-2 bg-transparent text-gray-900 dark:text-gray-100 font-semibold text-lg outline-none border-none focus:ring-0 focus:outline-none"
+                        }),
+                        React.createElement('span', {
+                            key: 'extension',
+                            className: "flex-shrink-0 py-2 text-gray-900 dark:text-gray-100 font-semibold text-lg"
+                        }, exportNameModal.extension)
+                    ])
+                ]),
+
+                // Buttons
+                React.createElement('div', {
+                    key: 'buttons',
+                    className: "flex justify-end gap-2"
+                }, [
+                    React.createElement('button', {
+                        key: 'cancel',
+                        onClick: () => setExportNameModal({ isOpen: false, defaultName: '', extension: '', exportFn: null, isCanvas: false }),
+                        className: "px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                    }, "Cancel"),
+                    React.createElement('button', {
+                        key: 'export',
+                        onClick: () => {
+                            if (exportNameModal.defaultName.trim()) {
+                                exportNameModal.exportFn(exportNameModal.defaultName.trim() + exportNameModal.extension);
+                                setExportNameModal({ isOpen: false, defaultName: '', extension: '', exportFn: null, isCanvas: false });
+                            }
+                        },
+                        disabled: !exportNameModal.defaultName.trim(),
+                        className: `px-4 py-2 text-sm rounded ${
+                            exportNameModal.defaultName.trim()
+                                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        }`
+                    }, "Export")
+                ])
             ])),
 
             // Unified context menu (right-click on group/node/edge in canvas)

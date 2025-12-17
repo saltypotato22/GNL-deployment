@@ -193,12 +193,7 @@
 
         let maxSuffix = 0;
 
-        // Check if base name itself exists (without suffix)
-        if (existingGroups.has(baseName)) {
-            maxSuffix = 1;
-        }
-
-        // Find highest suffix number
+        // Find highest suffix number among existing _N versions
         existingGroups.forEach(groupName => {
             const match = groupName.match(pattern);
             if (match) {
@@ -207,8 +202,99 @@
             }
         });
 
-        // Return next available suffix
+        // Return next available suffix (_1 if none exist, _2 if _1 exists, etc.)
         return `${baseName}_${maxSuffix + 1}`;
+    };
+
+    /**
+     * Merge imported nodes with existing nodes, renaming conflicting groups
+     * Uses _N suffix pattern (underscore + number) for conflicts
+     * @param {Array} existingNodes - Current node array
+     * @param {Array} importedNodes - Nodes from imported file
+     * @returns {Object} { mergedNodes, renamedGroups, newGroups }
+     */
+    const mergeNodes = function(existingNodes, importedNodes) {
+        // 1. Get existing group names
+        const existingGroups = new Set(existingNodes.map(n => n.Group_xA));
+        const renameMap = new Map();  // oldGroup -> newGroup
+        const newGroups = new Set();  // Track all new group names
+
+        // Track assigned names (existing + newly assigned) for suffix calculation
+        const assignedNames = new Set(existingGroups);
+
+        // 2. Get unique imported groups in order of first appearance
+        const importedGroupsOrdered = [];
+        const seenInImport = new Set();
+        importedNodes.forEach(n => {
+            if (!seenInImport.has(n.Group_xA)) {
+                seenInImport.add(n.Group_xA);
+                importedGroupsOrdered.push(n.Group_xA);
+            }
+        });
+
+        // 3. For each imported group, check conflict and generate unique name
+        importedGroupsOrdered.forEach(groupName => {
+            if (assignedNames.has(groupName)) {
+                // Conflict! Generate unique name using existing generateUniqueGroupName
+                // Pass a synthetic nodes array that includes already-assigned names
+                const syntheticNodes = Array.from(assignedNames).map(g => ({ Group_xA: g }));
+                const newName = generateUniqueGroupName(groupName, syntheticNodes);
+                renameMap.set(groupName, newName);
+                assignedNames.add(newName);  // Track new name for subsequent imports
+                newGroups.add(newName);
+            } else {
+                // No conflict - use as-is
+                assignedNames.add(groupName);
+                newGroups.add(groupName);
+            }
+        });
+
+        // 4. Build ID rename map for internal references
+        const idRenameMap = new Map();
+        importedNodes.forEach(node => {
+            if (renameMap.has(node.Group_xA)) {
+                const oldID = node.ID_xA || generateID(node.Group_xA, node.Node_xA);
+                const newID = generateID(renameMap.get(node.Group_xA), node.Node_xA);
+                if (oldID !== newID) {
+                    idRenameMap.set(oldID, newID);
+                }
+            }
+        });
+
+        // 4b. Build set of all valid IDs in imported file (after rename)
+        // Used to validate links - imported links should only reference imported nodes
+        const importedIDs = new Set(importedNodes.map(node => {
+            const newGroupName = renameMap.get(node.Group_xA) || node.Group_xA;
+            return generateID(newGroupName, node.Node_xA);
+        }));
+
+        // 5. Transform imported nodes (rename groups + update internal refs)
+        const processedNodes = importedNodes.map(node => {
+            const newGroupName = renameMap.get(node.Group_xA) || node.Group_xA;
+            const newID = generateID(newGroupName, node.Node_xA);
+
+            // Update linked reference if it points to a renamed node (internal ref)
+            let newLinkedID = node.Linked_Node_ID_xA;
+            if (newLinkedID) {
+                // First update the reference if it was renamed
+                if (idRenameMap.has(newLinkedID)) {
+                    newLinkedID = idRenameMap.get(newLinkedID);
+                }
+                // Then check if target exists in imported file - if not, clear link
+                // This prevents imported nodes from linking to existing data
+                if (!importedIDs.has(newLinkedID)) {
+                    newLinkedID = '';  // Clear cross-reference to existing data
+                }
+            }
+
+            return { ...node, Group_xA: newGroupName, ID_xA: newID, Linked_Node_ID_xA: newLinkedID };
+        });
+
+        return {
+            mergedNodes: [...existingNodes, ...processedNodes],
+            renamedGroups: renameMap,
+            newGroups: newGroups
+        };
     };
 
     /**
@@ -456,6 +542,7 @@
         sortNodes,
         generateID,
         generateUniqueGroupName,
+        mergeNodes,
         hasCycle,
         parseMermaidToNodes,
         measureTextPx,
